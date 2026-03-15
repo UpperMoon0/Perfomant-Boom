@@ -160,7 +160,7 @@ public class ExplosionScheduler {
             if (currentIndex >= blocks.size()) {
                 long start = System.nanoTime();
                 finalizeDestruction();
-                com.nstut.ExampleMod.logWarn("[PerfBoom] Destruction Finalized in {}ms", String.format("%.2f", (System.nanoTime() - start) / 1_000_000.0));
+                com.nstut.ExampleMod.LOGGER.info("Explosion destruction finalized in {}ms", String.format("%.2f", (System.nanoTime() - start) / 1_000_000.0));
                 return true;
             }
             return false;

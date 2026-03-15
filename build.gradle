@@ -45,6 +45,8 @@ subprojects {
 
     test {
         useJUnitPlatform()
+        minHeapSize = "512m"
+        maxHeapSize = "2048m"
     }
 
     java {
