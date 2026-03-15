@@ -38,7 +38,7 @@ public final class ExampleMod {
 
                     context.getSource().sendSuccess(() -> Component.literal("Calculating explosion of radius " + radius + "..."), false);
 
-                    FastExplosionEngine.calculateResistantExplosionAsync(level, pos, radius)
+                    FastExplosionEngine.calculateResistantExplosionAsync(level, level, pos, radius)
                         .thenAccept(blocks -> {
                             level.getServer().execute(() -> {
                                 ExplosionScheduler.scheduleDestruction(level, pos, blocks);

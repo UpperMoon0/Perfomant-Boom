@@ -2,12 +2,10 @@ package com.nstut.explosion;
 
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
-import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ForkJoinPool;
-import java.util.function.Consumer;
 
 /**
  * High-performance explosion engine for mass block destruction.
@@ -21,7 +19,7 @@ public class FastExplosionEngine {
      * Calculates blocks to be destroyed asynchronously.
      * Uses a spherical check for maximum performance on large scales.
      */
-    public static CompletableFuture<List<BlockPos>> calculateExplosionAsync(Level level, Vec3 center, float radius) {
+    public static CompletableFuture<List<BlockPos>> calculateExplosionAsync(net.minecraft.world.level.BlockGetter level, net.minecraft.world.level.LevelHeightAccessor worldBounds, Vec3 center, float radius) {
         return CompletableFuture.supplyAsync(() -> {
             List<BlockPos> affectedBlocks = new ArrayList<>();
             int blockRadius = (int) Math.ceil(radius);
@@ -40,9 +38,8 @@ public class FastExplosionEngine {
                         double distSq = distSqXZ + (double)y * y;
                         if (distSq <= radiusSq) {
                             BlockPos pos = new BlockPos(centerX + x, centerY + y, centerZ + z);
-                            if (level.isInWorldBounds(pos)) {
-                                affectedBlocks.add(pos.immutable());
-                            }
+                            if (worldBounds.isOutsideBuildHeight(pos.getY())) continue;
+                            affectedBlocks.add(pos.immutable());
                         }
                     }
                 }
@@ -55,7 +52,7 @@ public class FastExplosionEngine {
      * Advanced BFS-based calculation that respects block resistance.
      * Still asynchronous but slower than the spherical check.
      */
-    public static CompletableFuture<List<BlockPos>> calculateResistantExplosionAsync(Level level, Vec3 center, float radius) {
+    public static CompletableFuture<List<BlockPos>> calculateResistantExplosionAsync(net.minecraft.world.level.BlockGetter level, net.minecraft.world.level.LevelHeightAccessor worldBounds, Vec3 center, float radius) {
         return CompletableFuture.supplyAsync(() -> {
             LongOpenHashSet affectedBlocksLong = new LongOpenHashSet();
             Map<Long, Float> resistanceMap = new HashMap<>();
@@ -78,7 +75,7 @@ public class FastExplosionEngine {
                 for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
                     BlockPos nextPos = current.pos.relative(dir);
                     long nextLong = nextPos.asLong();
-                    if (!level.isInWorldBounds(nextPos)) continue;
+                    if (worldBounds.isOutsideBuildHeight(nextPos.getY())) continue;
 
                     // Optimization: Use a local cache for block resistance if possible
                     float resistance = level.getBlockState(nextPos).getBlock().getExplosionResistance();
