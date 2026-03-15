@@ -22,7 +22,7 @@ public final class ExampleModForge {
 
     private void onServerTick(net.minecraftforge.event.TickEvent.ServerTickEvent event) {
         if (event.phase == net.minecraftforge.event.TickEvent.Phase.END) {
-            ExampleMod.onServerTick(event.getServer().overworld().getServer().getLevel(net.minecraft.world.level.Level.OVERWORLD));
+            ExampleMod.onServerTick(event.getServer());
         }
     }
 

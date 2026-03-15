@@ -158,7 +158,9 @@ public class ExplosionScheduler {
 
             currentIndex = end;
             if (currentIndex >= blocks.size()) {
+                long start = System.nanoTime();
                 finalizeDestruction();
+                com.nstut.ExampleMod.logWarn("[PerfBoom] Destruction Finalized in {}ms", String.format("%.2f", (System.nanoTime() - start) / 1_000_000.0));
                 return true;
             }
             return false;
@@ -172,8 +174,7 @@ public class ExplosionScheduler {
 
             for (ChunkPos chunkPos : affectedChunks) {
                 net.minecraft.world.level.chunk.LevelChunk chunk = level.getChunk(chunkPos.x, chunkPos.z);
-                chunk.setUnsaved(true);
-                ChunkBlockModifier.syncChunkToClients(level, chunk);
+                ChunkBlockModifier.finalizeChunkChanges(level, chunk);
             }
             ChunkBlockModifier.triggerLightingUpdates(level, boundaries);
         }
