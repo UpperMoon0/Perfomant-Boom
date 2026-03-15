@@ -1,0 +1,36 @@
+# Java/Gradle
+.gradle
+build/
+bin/
+out/
+.artifacts/
+
+# IDE specific
+.idea/
+*.iml
+*.ipr
+*.iws
+.project
+.settings/
+.classpath
+.vscode/
+.kilocode/
+
+# Minecraft/Loom
+run/
+fabric-server-launch.properties
+*.log
+*.dat
+*.lck
+crash-reports/
+logs/
+world/
+
+# System
+.DS_Store
+Thumbs.db
+
+# Misc
+.env
+.java-version
+dependency-reduced-pom.xml
