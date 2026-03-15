@@ -6,6 +6,7 @@
   "client": [
   ],
   "mixins": [
+    "ThreadedLevelLightEngineMixin"
   ],
   "injectors": {
     "defaultRequire": 1

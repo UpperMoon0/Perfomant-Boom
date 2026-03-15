@@ -1,5 +1,6 @@
 package com.nstut.explosion;
 
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
@@ -56,36 +57,45 @@ public class FastExplosionEngine {
      */
     public static CompletableFuture<List<BlockPos>> calculateResistantExplosionAsync(Level level, Vec3 center, float radius) {
         return CompletableFuture.supplyAsync(() -> {
-            List<BlockPos> affectedBlocks = new ArrayList<>();
-            Map<BlockPos, Float> resistanceMap = new HashMap<>();
+            LongOpenHashSet affectedBlocksLong = new LongOpenHashSet();
+            Map<Long, Float> resistanceMap = new HashMap<>();
             PriorityQueue<ExplosionPoint> queue = new PriorityQueue<>(Comparator.comparingDouble(p -> -p.intensity));
 
             BlockPos startPos = BlockPos.containing(center);
+            long startLong = startPos.asLong();
             queue.add(new ExplosionPoint(startPos, radius));
-            resistanceMap.put(startPos, radius);
+            resistanceMap.put(startLong, radius);
 
             while (!queue.isEmpty()) {
                 ExplosionPoint current = queue.poll();
                 if (current.intensity <= 0) continue;
 
-                if (!affectedBlocks.contains(current.pos)) {
-                    affectedBlocks.add(current.pos);
+                if (affectedBlocksLong.add(current.pos.asLong())) {
+                    // This is only to keep the order or return type if necessary, 
+                    // but we'll collect at the end for better perf.
                 }
 
                 for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
                     BlockPos nextPos = current.pos.relative(dir);
+                    long nextLong = nextPos.asLong();
                     if (!level.isInWorldBounds(nextPos)) continue;
 
+                    // Optimization: Use a local cache for block resistance if possible
                     float resistance = level.getBlockState(nextPos).getBlock().getExplosionResistance();
                     float nextIntensity = current.intensity - (resistance + 0.3f) * 0.3f;
 
-                    if (nextIntensity > 0 && nextIntensity > resistanceMap.getOrDefault(nextPos, -1f)) {
-                        resistanceMap.put(nextPos, nextIntensity);
+                    if (nextIntensity > 0 && nextIntensity > resistanceMap.getOrDefault(nextLong, -1f)) {
+                        resistanceMap.put(nextLong, nextIntensity);
                         queue.add(new ExplosionPoint(nextPos, nextIntensity));
                     }
                 }
             }
-            return affectedBlocks;
+
+            List<BlockPos> finalBlocks = new ArrayList<>(affectedBlocksLong.size());
+            for (long l : affectedBlocksLong) {
+                finalBlocks.add(BlockPos.of(l));
+            }
+            return finalBlocks;
         }, CALCULATION_POOL);
     }
 

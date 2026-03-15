@@ -1,7 +1,7 @@
 package com.nstut.explosion;
 
+import com.nstut.explosion.util.LightFlushable;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.SectionPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
@@ -43,22 +43,39 @@ public class ChunkBlockModifier {
     }
 
     /**
-     * Marks a chunk as modified and notifies clients about the change.
-     * Call this once per chunk after a batch of fast modifications.
+     * Marks a chunk as modified and notifies clients about the change using a full chunk packet.
      */
     public static void finalizeChunkChanges(ServerLevel level, LevelChunk chunk) {
         chunk.setUnsaved(true);
         
-        // Mark all sections as needing a light check
-        for (int i = 0; i < chunk.getSections().length; i++) {
-            LevelChunkSection section = chunk.getSection(i);
-            if (section != null) {
-                SectionPos sectionPos = SectionPos.of(chunk.getPos(), chunk.getSectionYFromSectionIndex(i));
-                level.getLightEngine().updateSectionStatus(sectionPos, false);
-            }
+        // Flush light engine to ensure our changes are processed
+        if (level.getLightEngine() instanceof LightFlushable flushable) {
+            flushable.perfomant_boom$flushAll();
         }
+        
+        syncChunkToClients(level, chunk);
+    }
 
-        // This triggers a sync of the whole chunk to nearby clients
-        level.getChunkSource().blockChanged(chunk.getPos().getWorldPosition());
+    /**
+     * Sends a full chunk data packet with light to all players tracking this chunk.
+     */
+    public static void syncChunkToClients(ServerLevel level, LevelChunk chunk) {
+        net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket packet = 
+            new net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket(chunk, level.getLightEngine(), null, null);
+        
+        level.getChunkSource().chunkMap.getPlayers(chunk.getPos(), false).forEach(player -> {
+            player.connection.send(packet);
+        });
+    }
+
+    /**
+     * Triggers lighting recalculation for a list of positions.
+     * Should be called for the boundary of the explosion.
+     */
+    public static void triggerLightingUpdates(ServerLevel level, java.util.Collection<BlockPos> boundaries) {
+        net.minecraft.world.level.lighting.LevelLightEngine lightEngine = level.getLightEngine();
+        for (BlockPos pos : boundaries) {
+            lightEngine.checkBlock(pos);
+        }
     }
 }

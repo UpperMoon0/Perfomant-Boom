@@ -33,8 +33,8 @@ public class ExplosionScheduler {
         private final ServerLevel level;
         private final Vec3 center;
         private final List<BlockPos> blocks;
-        private final LootAggregator lootAggregator = new LootAggregator();
         private final Set<ChunkPos> affectedChunks = new HashSet<>();
+        private final Set<BlockPos> boundaries = new HashSet<>();
         private int currentIndex = 0;
 
         public DestructionTask(ServerLevel level, Vec3 center, List<BlockPos> blocks) {
@@ -126,9 +126,15 @@ public class ExplosionScheduler {
                 BlockPos pos = blocks.get(i);
                 BlockState state = level.getBlockState(pos);
                 if (!state.isAir()) {
-                    lootAggregator.addBlockDrops(level, pos, state);
                     ChunkBlockModifier.setBlockFast(level, pos, air);
                     affectedChunks.add(new ChunkPos(pos));
+                    // Check if neighbors are on the boundary of the explosion
+                    for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
+                        BlockPos neighbor = pos.relative(dir);
+                        if (!blocks.contains(neighbor)) {
+                            boundaries.add(neighbor);
+                        }
+                    }
                 }
             }
 
@@ -145,8 +151,8 @@ public class ExplosionScheduler {
             for (ChunkPos chunkPos : affectedChunks) {
                 ChunkBlockModifier.finalizeChunkChanges(level, level.getChunk(chunkPos.x, chunkPos.z));
             }
-            // Spawn aggregated loot
-            lootAggregator.spawnDrops(level, center);
+            // Trigger lighting updates for the boundaries
+            ChunkBlockModifier.triggerLightingUpdates(level, boundaries);
         }
     }
 }
