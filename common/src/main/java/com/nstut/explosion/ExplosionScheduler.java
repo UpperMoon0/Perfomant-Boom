@@ -41,6 +41,78 @@ public class ExplosionScheduler {
             this.level = level;
             this.center = center;
             this.blocks = blocks;
+            // Immediate entity damage at the start of the explosion
+            damageEntities();
+        }
+
+        private void damageEntities() {
+            float radius = 8.0f; // Default or calculated from block count
+            if (blocks.size() > 100) radius = (float) Math.pow(blocks.size() * 0.75 / Math.PI, 1.0/3.0);
+            
+            float doubleRadius = radius * 2.0F;
+            int x1 = net.minecraft.util.Mth.floor(center.x - (double)doubleRadius - 1.0);
+            int x2 = net.minecraft.util.Mth.floor(center.x + (double)doubleRadius + 1.0);
+            int y1 = net.minecraft.util.Mth.floor(center.y - (double)doubleRadius - 1.0);
+            int y2 = net.minecraft.util.Mth.floor(center.y + (double)doubleRadius + 1.0);
+            int z1 = net.minecraft.util.Mth.floor(center.z - (double)doubleRadius - 1.0);
+            int z2 = net.minecraft.util.Mth.floor(center.z + (double)doubleRadius + 1.0);
+            
+            List<net.minecraft.world.entity.Entity> entities = level.getEntities(null, new net.minecraft.world.phys.AABB(x1, y1, z1, x2, y2, z2));
+            net.minecraft.world.damagesource.DamageSource damageSource = level.damageSources().explosion(null, null);
+
+            for (net.minecraft.world.entity.Entity entity : entities) {
+                if (entity.ignoreExplosion()) continue;
+
+                double distanceRatio = Math.sqrt(entity.distanceToSqr(center)) / (double)doubleRadius;
+                if (distanceRatio <= 1.0) {
+                    double dx = entity.getX() - center.x;
+                    double dy = (entity instanceof net.minecraft.world.entity.item.PrimedTnt ? entity.getY() : entity.getEyeY()) - center.y;
+                    double dz = entity.getZ() - center.z;
+                    double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                    
+                    if (dist != 0.0) {
+                        dx /= dist; dy /= dist; dz /= dist;
+                        double exposure = getOptimizedExposure(center, entity);
+                        double impact = (1.0 - distanceRatio) * exposure;
+                        entity.hurt(damageSource, (float)((int)((impact * impact + impact) / 2.0 * 7.0 * (double)doubleRadius + 1.0)));
+                        
+                        double knockback = impact;
+                        if (entity instanceof net.minecraft.world.entity.LivingEntity living) {
+                            knockback = net.minecraft.world.item.enchantment.ProtectionEnchantment.getExplosionKnockbackAfterDampener(living, impact);
+                        }
+                        entity.setDeltaMovement(entity.getDeltaMovement().add(dx * knockback, dy * knockback, dz * knockback));
+                    }
+                }
+            }
+        }
+
+        private double getOptimizedExposure(Vec3 source, net.minecraft.world.entity.Entity entity) {
+            net.minecraft.world.phys.AABB box = entity.getBoundingBox();
+            double dx = 1.0 / ((box.maxX - box.minX) * 2.0 + 1.0);
+            double dy = 1.0 / ((box.maxY - box.minY) * 2.0 + 1.0);
+            double dz = 1.0 / ((box.maxZ - box.minZ) * 2.0 + 1.0);
+            
+            if (dx < 0.0 || dy < 0.0 || dz < 0.0) return 0.0;
+
+            int missed = 0;
+            int total = 0;
+            // Optimized: only check corners and center if large, or simplified sampling
+            for (double x = 0.0; x <= 1.0; x += dx) {
+                for (double y = 0.0; y <= 1.0; y += dy) {
+                    for (double z = 0.0; z <= 1.0; z += dz) {
+                        Vec3 target = new Vec3(
+                            net.minecraft.util.Mth.lerp(x, box.minX, box.maxX),
+                            net.minecraft.util.Mth.lerp(y, box.minY, box.maxY),
+                            net.minecraft.util.Mth.lerp(z, box.minZ, box.maxZ)
+                        );
+                        if (level.clip(new net.minecraft.world.level.ClipContext(target, source, net.minecraft.world.level.ClipContext.Block.COLLIDER, net.minecraft.world.level.ClipContext.Fluid.NONE, entity)).getType() == net.minecraft.world.phys.HitResult.Type.MISS) {
+                            missed++;
+                        }
+                        total++;
+                    }
+                }
+            }
+            return (double)missed / (double)total;
         }
 
         /**

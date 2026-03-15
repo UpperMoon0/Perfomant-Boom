@@ -31,15 +31,15 @@ public class ChunkBlockModifier {
 
         LevelChunkSection section = chunk.getSection(sectionIndex);
         if (section == null) {
-            // If the section is empty (all air), Minecraft might return null
-            // We usually don't need to do anything if we are setting it to air anyway,
-            // but for a general tool, we might need to initialize it.
-            return; 
+            if (state.isAir()) return;
+            section = new LevelChunkSection(level.registryAccess().registryOrThrow(net.minecraft.core.registries.Registries.BIOME));
+            chunk.getSections()[sectionIndex] = section;
         }
 
-        // setBlockState(x, y, z, state, unchecked)
-        // unchecked=true avoids some internal safety checks but is faster
-        section.setBlockState(x & 15, y & 15, z & 15, state, true);
+        // Low-level access: bypass setBlockState to skip counts/ticking logic if we do it ourselves
+        // or just use the simplified version.
+        // To be TRULY fast, we can access the PalettedContainer directly.
+        section.setBlockState(x & 15, y & 15, z & 15, state, false); // false for unchecked
     }
 
     /**

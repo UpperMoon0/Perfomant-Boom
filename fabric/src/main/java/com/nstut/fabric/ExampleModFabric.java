@@ -7,11 +7,15 @@ import com.nstut.ExampleMod;
 public final class ExampleModFabric implements ModInitializer {
     @Override
     public void onInitialize() {
-        // This code runs as soon as Minecraft is in a mod-load-ready state.
-        // However, some things (like resources) may still be uninitialized.
-        // Proceed with mild caution.
-
         // Run our common setup.
         ExampleMod.init();
+
+        // Register server tick event
+        net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK.register(ExampleMod::onServerTick);
+
+        // Register commands
+        net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
+            ExampleMod.registerCommands(dispatcher);
+        });
     }
 }

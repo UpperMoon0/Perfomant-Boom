@@ -3,8 +3,7 @@ package com.nstut.explosion;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ForkJoinPool;
 import java.util.function.Consumer;
@@ -56,8 +55,47 @@ public class FastExplosionEngine {
      * Still asynchronous but slower than the spherical check.
      */
     public static CompletableFuture<List<BlockPos>> calculateResistantExplosionAsync(Level level, Vec3 center, float radius) {
-        // Implementation for a more "realistic" but still optimized explosion
-        // will be added if needed. For million-block scale, sphere is often preferred.
-        return calculateExplosionAsync(level, center, radius);
+        return CompletableFuture.supplyAsync(() -> {
+            List<BlockPos> affectedBlocks = new ArrayList<>();
+            Map<BlockPos, Float> resistanceMap = new HashMap<>();
+            PriorityQueue<ExplosionPoint> queue = new PriorityQueue<>(Comparator.comparingDouble(p -> -p.intensity));
+
+            BlockPos startPos = BlockPos.containing(center);
+            queue.add(new ExplosionPoint(startPos, radius));
+            resistanceMap.put(startPos, radius);
+
+            while (!queue.isEmpty()) {
+                ExplosionPoint current = queue.poll();
+                if (current.intensity <= 0) continue;
+
+                if (!affectedBlocks.contains(current.pos)) {
+                    affectedBlocks.add(current.pos);
+                }
+
+                for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
+                    BlockPos nextPos = current.pos.relative(dir);
+                    if (!level.isInWorldBounds(nextPos)) continue;
+
+                    float resistance = level.getBlockState(nextPos).getBlock().getExplosionResistance();
+                    float nextIntensity = current.intensity - (resistance + 0.3f) * 0.3f;
+
+                    if (nextIntensity > 0 && nextIntensity > resistanceMap.getOrDefault(nextPos, -1f)) {
+                        resistanceMap.put(nextPos, nextIntensity);
+                        queue.add(new ExplosionPoint(nextPos, nextIntensity));
+                    }
+                }
+            }
+            return affectedBlocks;
+        }, CALCULATION_POOL);
+    }
+
+    private static class ExplosionPoint {
+        final BlockPos pos;
+        final float intensity;
+
+        ExplosionPoint(BlockPos pos, float intensity) {
+            this.pos = pos;
+            this.intensity = intensity;
+        }
     }
 }
