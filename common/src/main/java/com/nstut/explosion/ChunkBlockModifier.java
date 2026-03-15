@@ -47,12 +47,6 @@ public class ChunkBlockModifier {
      */
     public static void finalizeChunkChanges(ServerLevel level, LevelChunk chunk) {
         chunk.setUnsaved(true);
-        
-        // Flush light engine to ensure our changes are processed
-        if (level.getLightEngine() instanceof LightFlushable flushable) {
-            flushable.perfomant_boom$flushAll();
-        }
-        
         syncChunkToClients(level, chunk);
     }
 

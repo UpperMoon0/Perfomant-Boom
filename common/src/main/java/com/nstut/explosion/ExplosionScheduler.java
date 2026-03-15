@@ -33,6 +33,7 @@ public class ExplosionScheduler {
         private final ServerLevel level;
         private final Vec3 center;
         private final List<BlockPos> blocks;
+        private final it.unimi.dsi.fastutil.longs.LongOpenHashSet blocksLong;
         private final Set<ChunkPos> affectedChunks = new HashSet<>();
         private final Set<BlockPos> boundaries = new HashSet<>();
         private int currentIndex = 0;
@@ -41,6 +42,9 @@ public class ExplosionScheduler {
             this.level = level;
             this.center = center;
             this.blocks = blocks;
+            this.blocksLong = new it.unimi.dsi.fastutil.longs.LongOpenHashSet(blocks.size());
+            for (BlockPos p : blocks) this.blocksLong.add(p.asLong());
+            
             // Immediate entity damage at the start of the explosion
             damageEntities();
         }
@@ -122,18 +126,32 @@ public class ExplosionScheduler {
             int end = Math.min(currentIndex + count, blocks.size());
             BlockState air = Blocks.AIR.defaultBlockState();
 
+            net.minecraft.world.level.chunk.LevelChunk lastChunk = null;
+            ChunkPos lastChunkPos = null;
+
             for (int i = currentIndex; i < end; i++) {
                 BlockPos pos = blocks.get(i);
-                BlockState state = level.getBlockState(pos);
-                if (!state.isAir()) {
-                    ChunkBlockModifier.setBlockFast(level, pos, air);
-                    affectedChunks.add(new ChunkPos(pos));
-                    // Check if neighbors are on the boundary of the explosion
-                    for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
-                        BlockPos neighbor = pos.relative(dir);
-                        if (!blocks.contains(neighbor)) {
-                            boundaries.add(neighbor);
-                        }
+                
+                ChunkPos cp = new ChunkPos(pos);
+                if (!cp.equals(lastChunkPos)) {
+                    lastChunk = level.getChunk(cp.x, cp.z);
+                    lastChunkPos = cp;
+                    affectedChunks.add(cp);
+                }
+
+                // Inline setBlockFast logic with local chunk cache
+                int sectionIndex = lastChunk.getSectionIndex(pos.getY());
+                if (sectionIndex >= 0 && sectionIndex < lastChunk.getSections().length) {
+                    net.minecraft.world.level.chunk.LevelChunkSection section = lastChunk.getSection(sectionIndex);
+                    if (section != null) {
+                        section.setBlockState(pos.getX() & 15, pos.getY() & 15, pos.getZ() & 15, air, false);
+                    }
+                }
+
+                for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
+                    BlockPos neighbor = pos.relative(dir);
+                    if (!blocksLong.contains(neighbor.asLong())) {
+                        boundaries.add(neighbor);
                     }
                 }
             }
@@ -147,11 +165,16 @@ public class ExplosionScheduler {
         }
 
         private void finalizeDestruction() {
-            // Finalize each chunk
-            for (ChunkPos chunkPos : affectedChunks) {
-                ChunkBlockModifier.finalizeChunkChanges(level, level.getChunk(chunkPos.x, chunkPos.z));
+            // Force light engine to see all blocks removed as air
+            if (level.getLightEngine() instanceof com.nstut.explosion.util.LightFlushable flushable) {
+                flushable.perfomant_boom$flushAll();
             }
-            // Trigger lighting updates for the boundaries
+
+            for (ChunkPos chunkPos : affectedChunks) {
+                net.minecraft.world.level.chunk.LevelChunk chunk = level.getChunk(chunkPos.x, chunkPos.z);
+                chunk.setUnsaved(true);
+                ChunkBlockModifier.syncChunkToClients(level, chunk);
+            }
             ChunkBlockModifier.triggerLightingUpdates(level, boundaries);
         }
     }
