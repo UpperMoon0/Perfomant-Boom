@@ -51,7 +51,8 @@ public class FastExplosionEngine {
      */
     public static CompletableFuture<List<BlockPos>> calculateResistantExplosionAsync(FastWorldView worldView, Vec3 center, float radius) {
         return CompletableFuture.supplyAsync(() -> {
-            LongOpenHashSet affectedBlocksLong = new LongOpenHashSet();
+            List<BlockPos> finalBlocks = new ArrayList<>();
+            LongOpenHashSet visited = new LongOpenHashSet();
             Long2FloatOpenHashMap resistanceMap = new Long2FloatOpenHashMap();
             resistanceMap.defaultReturnValue(-1f);
             
@@ -68,7 +69,10 @@ public class FastExplosionEngine {
                 ExplosionPoint current = queue.poll();
                 if (current.intensity <= 0) continue;
 
-                affectedBlocksLong.add(current.pos.asLong());
+                long currentLong = current.pos.asLong();
+                if (visited.add(currentLong)) {
+                    finalBlocks.add(current.pos);
+                }
 
                 for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
                     int nx = current.pos.getX() + dir.getStepX();
@@ -90,10 +94,6 @@ public class FastExplosionEngine {
                 }
             }
 
-            List<BlockPos> finalBlocks = new ArrayList<>(affectedBlocksLong.size());
-            for (long l : affectedBlocksLong) {
-                finalBlocks.add(BlockPos.of(l));
-            }
             return finalBlocks;
         }, CALCULATION_POOL);
     }

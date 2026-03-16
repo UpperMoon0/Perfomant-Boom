@@ -13,7 +13,7 @@ import java.util.*;
  */
 public class ExplosionScheduler {
     private static final Queue<DestructionTask> TASK_QUEUE = new ArrayDeque<>();
-    private static final int BLOCKS_PER_TICK = 50000; // Configurable
+    private static final int BLOCKS_PER_TICK = 2000; // Configurable for gradual destruction
 
     public static void scheduleDestruction(ServerLevel level, Vec3 center, List<BlockPos> blocks) {
         TASK_QUEUE.add(new DestructionTask(level, center, blocks));
