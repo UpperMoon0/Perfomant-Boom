@@ -1,75 +1,168 @@
 package com.nstut.explosion;
 
-import com.nstut.explosion.util.LightFlushable;
+import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
+import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
+import it.unimi.dsi.fastutil.shorts.ShortOpenHashSet;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.SectionPos;
+import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.levelgen.Heightmap;
+
+import java.util.List;
 
 /**
- * Utility for fast block modification by bypassing high-level Level methods.
+ * Performs direct chunk-section writes while restoring the world bookkeeping that
+ * {@link LevelChunk#setBlockState} normally maintains.
  */
-public class ChunkBlockModifier {
+public final class ChunkBlockModifier {
+    private ChunkBlockModifier() {
+    }
 
-    /**
-     * Sets a block state directly in the chunk section.
-     * This bypasses neighbor updates, lighting updates, and packet sending.
-     * Use this for mass destruction, followed by a manual chunk update.
-     */
-    public static void setBlockFast(ServerLevel level, BlockPos pos, BlockState state) {
-        int x = pos.getX();
-        int y = pos.getY();
-        int z = pos.getZ();
-        
-        LevelChunk chunk = level.getChunkAt(pos);
-        int sectionIndex = chunk.getSectionIndex(y);
-        
-        if (sectionIndex < 0 || sectionIndex >= chunk.getSections().length) {
-            return;
+    public static MutationContext begin(ServerLevel level, LevelChunk chunk) {
+        return new MutationContext(level, chunk);
+    }
+
+    public static final class MutationContext {
+        private final ServerLevel level;
+        private final LevelChunk chunk;
+        private final Heightmap worldSurface;
+        private final Heightmap oceanFloor;
+        private final Heightmap motionBlocking;
+        private final Heightmap motionBlockingNoLeaves;
+        private final Int2ObjectOpenHashMap<ShortOpenHashSet> changedBySection = new Int2ObjectOpenHashMap<>();
+        private final IntOpenHashSet touchedSections = new IntOpenHashSet();
+
+        private MutationContext(ServerLevel level, LevelChunk chunk) {
+            this.level = level;
+            this.chunk = chunk;
+            this.worldSurface = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE);
+            this.oceanFloor = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.OCEAN_FLOOR);
+            this.motionBlocking = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.MOTION_BLOCKING);
+            this.motionBlockingNoLeaves = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES);
         }
 
-        LevelChunkSection section = chunk.getSection(sectionIndex);
-        if (section == null) {
-            if (state.isAir()) return;
-            section = new LevelChunkSection(level.registryAccess().registryOrThrow(net.minecraft.core.registries.Registries.BIOME));
-            chunk.getSections()[sectionIndex] = section;
+        /**
+         * Removes a block without neighbor/drop processing. Returns the previous state, or
+         * {@code null} if there was nothing to change.
+         */
+        public BlockState remove(BlockPos.MutableBlockPos pos) {
+            int y = pos.getY();
+            int sectionIndex = chunk.getSectionIndex(y);
+            LevelChunkSection[] sections = chunk.getSections();
+            if (sectionIndex < 0 || sectionIndex >= sections.length) {
+                return null;
+            }
+
+            LevelChunkSection section = sections[sectionIndex];
+            if (section == null || section.hasOnlyAir()) {
+                return null;
+            }
+
+            int localX = pos.getX() & 15;
+            int localY = y & 15;
+            int localZ = pos.getZ() & 15;
+            BlockState oldState = section.getBlockState(localX, localY, localZ);
+            if (oldState.isAir()) {
+                return null;
+            }
+
+            BlockState air = Blocks.AIR.defaultBlockState();
+            section.setBlockState(localX, localY, localZ, air, false);
+
+            // Mirror LevelChunk#setBlockState's heightmap maintenance. These calls are
+            // O(1) for blocks below the current height and only scan downward when the
+            // removed block was the column's current top.
+            worldSurface.update(localX, y, localZ, air);
+            oceanFloor.update(localX, y, localZ, air);
+            motionBlocking.update(localX, y, localZ, air);
+            motionBlockingNoLeaves.update(localX, y, localZ, air);
+
+            // This is the vanilla cleanup hook invoked by LevelChunk#setBlockState after
+            // the palette write. The base implementation removes block entities/tickers;
+            // specialized blocks also clear rails/redstone/sensors and preserve container
+            // contents. Calling it here is both more correct and cheaper than full setBlock.
+            oldState.onRemove(level, pos, air, false);
+
+            // Level.markAndNotifyBlock normally reaches this hook after the chunk write.
+            // It is what keeps the persistent POI index in sync for beds, bells and
+            // villager workstations. Raw section writes must not leave ghost POIs behind.
+            level.onBlockStateChange(pos, oldState, air);
+
+            touchedSections.add(sectionIndex);
+            changedBySection
+                .computeIfAbsent(sectionIndex, ignored -> new ShortOpenHashSet())
+                .add(packLocal(localX, localY, localZ));
+
+            return oldState;
         }
 
-        // Low-level access: bypass setBlockState to skip counts/ticking logic if we do it ourselves
-        // or just use the simplified version.
-        // To be TRULY fast, we can access the PalettedContainer directly.
-        section.setBlockState(x & 15, y & 15, z & 15, state, false); // false for unchecked
-    }
+        /**
+         * Rebuilds chunk-level skylight source metadata, updates empty-section state,
+         * marks the chunk dirty, and sends compact section block-change packets.
+         */
+        public void finish() {
+            if (changedBySection.isEmpty()) {
+                return;
+            }
 
-    /**
-     * Marks a chunk as modified and notifies clients about the change using a full chunk packet.
-     */
-    public static void finalizeChunkChanges(ServerLevel level, LevelChunk chunk) {
-        chunk.setUnsaved(true);
-        syncChunkToClients(level, chunk);
-    }
+            // Direct section writes bypass LevelChunk's per-block skylight source update.
+            // Rebuilding once per changed chunk is far cheaper for mass destruction.
+            chunk.getSkyLightSources().fillFrom(chunk);
 
-    /**
-     * Sends a full chunk data packet with light to all players tracking this chunk.
-     */
-    public static void syncChunkToClients(ServerLevel level, LevelChunk chunk) {
-        net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket packet = 
-            new net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket(chunk, level.getLightEngine(), null, null);
-        
-        level.getChunkSource().chunkMap.getPlayers(chunk.getPos(), false).forEach(player -> {
-            player.connection.send(packet);
-        });
-    }
+            touchedSections.forEach(sectionIndex -> {
+                LevelChunkSection section = chunk.getSection(sectionIndex);
+                if (section.hasOnlyAir()) {
+                    int sectionY = chunk.getSectionYFromSectionIndex(sectionIndex);
+                    level.getLightEngine().updateSectionStatus(
+                        SectionPos.of(chunk.getPos(), sectionY),
+                        true
+                    );
+                }
+            });
 
-    /**
-     * Triggers lighting recalculation for a list of positions.
-     * Should be called for the boundary of the explosion.
-     */
-    public static void triggerLightingUpdates(ServerLevel level, java.util.Collection<BlockPos> boundaries) {
-        net.minecraft.world.level.lighting.LevelLightEngine lightEngine = level.getLightEngine();
-        for (BlockPos pos : boundaries) {
-            lightEngine.checkBlock(pos);
+            chunk.setUnsaved(true);
+            syncChangedSections();
+        }
+
+        public int changedBlockCount() {
+            int total = 0;
+            for (ShortOpenHashSet changed : changedBySection.values()) {
+                total += changed.size();
+            }
+            return total;
+        }
+
+        private void syncChangedSections() {
+            List<ServerPlayer> players = level.getChunkSource().chunkMap.getPlayers(chunk.getPos(), false);
+            if (players.isEmpty()) {
+                return;
+            }
+
+            for (Int2ObjectMap.Entry<ShortOpenHashSet> entry : changedBySection.int2ObjectEntrySet()) {
+                int sectionIndex = entry.getIntKey();
+                LevelChunkSection section = chunk.getSection(sectionIndex);
+                int sectionY = chunk.getSectionYFromSectionIndex(sectionIndex);
+                ClientboundSectionBlocksUpdatePacket packet = new ClientboundSectionBlocksUpdatePacket(
+                    SectionPos.of(chunk.getPos(), sectionY),
+                    entry.getValue(),
+                    section
+                );
+
+                for (ServerPlayer player : players) {
+                    player.connection.send(packet);
+                }
+            }
+        }
+
+        private static short packLocal(int x, int y, int z) {
+            return (short)((x & 15) << 8 | (z & 15) << 4 | (y & 15));
         }
     }
 }

@@ -22,9 +22,6 @@
       "com.nstut.fabric.client.ExampleModFabricClient"
     ]
   },
-  "mixins": [
-    "perfomant_boom.mixins.json"
-  ],
   "depends": {
     "fabricloader": ">=0.18.4",
     "minecraft": "~1.20.1",
