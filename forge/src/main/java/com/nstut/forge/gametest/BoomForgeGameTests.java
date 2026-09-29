@@ -1,4 +1,4 @@
-package com.nstut.forge.gametest;
+package com.nstut.perfomantboom.forge.gametest;
 
 import com.nstut.testing.BoomGameTestLogic;
 import net.minecraft.gametest.framework.GameTest;

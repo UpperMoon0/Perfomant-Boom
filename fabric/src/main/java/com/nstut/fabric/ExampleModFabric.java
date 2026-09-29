@@ -1,8 +1,8 @@
-package com.nstut.fabric;
+package com.nstut.perfomantboom.fabric;
 
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
-import com.nstut.ExampleMod;
+import com.nstut.perfomantboom.ExampleMod;
 
 public final class ExampleModFabric implements ModInitializer {
     @Override

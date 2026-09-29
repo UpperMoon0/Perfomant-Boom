@@ -1,6 +1,6 @@
 package com.nstut.explosion;
 
-import com.nstut.ExampleMod;
+import com.nstut.perfomantboom.ExampleMod;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;

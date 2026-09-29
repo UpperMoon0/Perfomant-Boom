@@ -1,12 +1,12 @@
-package com.nstut.forge;
+package com.nstut.perfomantboom.forge;
 
 import dev.architectury.platform.forge.EventBuses;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 
-import com.nstut.ExampleMod;
+import com.nstut.perfomantboom.ExampleMod;
 import com.nstut.testing.BoomClientIntegrationTest;
-import com.nstut.forge.gametest.BoomForgeGameTests;
+import com.nstut.perfomantboom.forge.gametest.BoomForgeGameTests;
 import net.minecraftforge.event.RegisterGameTestsEvent;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.fml.DistExecutor;

@@ -1,4 +1,4 @@
-package com.nstut.fabric.client;
+package com.nstut.perfomantboom.fabric.client;
 
 import com.nstut.testing.BoomClientIntegrationTest;
 import net.fabricmc.api.ClientModInitializer;

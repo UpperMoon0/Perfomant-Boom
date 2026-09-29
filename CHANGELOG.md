@@ -9,6 +9,10 @@ Versioned release notes live in `changelog/`. Their presence describes planned/s
 - Add player-facing CurseForge copy, installation/compatibility guidance, contributor and architecture documentation, and the shared terrain API contract.
 - Document same-version development dependency caching and distinguish modern coverage from the legacy live-client gates.
 
+## 1.1.2
+
+[Full notes](changelog/1.1.2.md): namespace loader/bootstrap classes to avoid Java module split-package collisions with other NsTut mods while preserving the public Boom API packages.
+
 ## 1.1.1
 
 [Full notes](changelog/1.1.1.md): exact Fabric game targets, additive modern client knockback, native client explosion effects and expanded integration guides.

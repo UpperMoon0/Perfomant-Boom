@@ -1,4 +1,4 @@
-package com.nstut;
+package com.nstut.perfomantboom;
 
 import com.mojang.brigadier.arguments.FloatArgumentType;
 import com.nstut.explosion.ExplosionScheduler;

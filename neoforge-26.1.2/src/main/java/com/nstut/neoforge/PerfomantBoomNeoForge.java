@@ -1,5 +1,5 @@
-package com.nstut.neoforge;
-import com.nstut.ExampleMod;
+package com.nstut.perfomantboom.neoforge;
+import com.nstut.perfomantboom.ExampleMod;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;

@@ -16,10 +16,10 @@
   "environment": "*",
   "entrypoints": {
     "main": [
-      "com.nstut.fabric.ExampleModFabric"
+      "com.nstut.perfomantboom.fabric.ExampleModFabric"
     ],
     "client": [
-      "com.nstut.fabric.client.ExampleModFabricClient"
+      "com.nstut.perfomantboom.fabric.client.ExampleModFabricClient"
     ]
   },
   "depends": {
