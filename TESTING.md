@@ -26,7 +26,7 @@ Coordination commands are paced outside measured work to respect vanilla spam li
 
 ## Yield, unload and interrupted-save regressions
 
-Each frozen live job also starts two additional player-free dedicated-server processes using the same frozen classes. The first uses a far-away, open-top single-chunk fixture and the production scheduler driver with an expired deadline to deterministically suspend inside a slice; ordinary server ticks are allowed to unload chunks, and tests require a genuinely different `LevelChunk` instance on reload. No test removes a holder with reflection or substitutes mock chunks.
+Each frozen live job also starts two additional player-free dedicated-server processes using the same frozen classes. The first uses a far-away, open-top single-chunk fixture and the production scheduler driver with an expired deadline to deterministically suspend inside a slice; ordinary server ticks are allowed to unload chunks, and tests require a genuinely different `LevelChunk` instance on reload. No test removes a holder with reflection or substitutes mock chunks. Only the final partial-save/control observation uses explicit, symmetric 3×3 FULL-status chunk tickets, so hashing cannot accidentally reload an unloaded chunk before its light data is ready. Both deliberate unload/replacement scenarios run without those tickets; the observation tickets are removed before normal shutdown. Exact baseline block/light equality is asserted before the partial mutation.
 
 The ray test replaces the newly loaded fixture with bedrock and proves no new positions are selected from the detached netherrack chunk. The mutation test saves/unloads after eight removals, verifies the exact saved prefix after reload, resumes, checks that the detached palette stays unchanged while the replacement changes, and then completes normally.
 
@@ -38,9 +38,9 @@ Committed removals survive a normal save; pending explosion work is deliberately
 
 ### Source basis
 
-Implementation was checked against the decompiled Minecraft **1.20.1** files in `MC-Modding-Src/1.20.1`, with Mojang-mapped vanilla bytecode used to resolve the partially obfuscated method names:
+Implementation was checked against the decompiled Minecraft **1.20.1** files in `MC-Modding-Src/1.20.1`, at source-repository commit `2e782f8ea29b04094efc76b5a59f51a7174013ee`, with Mojang-mapped vanilla bytecode used to resolve the partially obfuscated method names:
 
-- `server/level/ServerChunkCache.java:141–162, 179–202, 225–244`: synchronous chunk acquisition, non-loading `getChunkNow`, and the temporary UNKNOWN ticket. `server/level/TicketType.java:23` gives UNKNOWN a one-tick timeout. These are not task-lifetime chunk ownership.
+- `server/level/ServerChunkCache.java:141–162, 179–202, 225–244`: synchronous chunk acquisition, non-loading `getChunkNow`, and the temporary UNKNOWN ticket. `server/level/TicketType.java:23` gives UNKNOWN a one-tick timeout. These are not task-lifetime chunk ownership. `server/level/DistanceManager.java:201–212` defines observation-ticket levels as FULL minus radius and supports explicit removal; the test uses radius zero.
 - `server/level/ChunkMap.java:437–460, 508–534, 741–765`: save-all, holder unload/save and `save(ChunkAccess)`'s unsaved check/reset. Successful writes must become dirty again after any intervening save.
 - `world/level/chunk/LevelChunk.java:222–279`: four heightmaps, empty-section transitions, `LightEngine.hasDifferentLightProperties`, `ChunkSkyLightSources.update`, queued `checkBlock`, removal hooks and dirty state. `server/level/ThreadedLevelLightEngine.java:69–72` copies mutable positions before queuing work.
 

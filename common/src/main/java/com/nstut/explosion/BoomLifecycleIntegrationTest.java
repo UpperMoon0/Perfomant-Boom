@@ -5,7 +5,9 @@ import com.nstut.testing.BoomStateDigest;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.TicketType;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.levelgen.Heightmap;
@@ -27,6 +29,8 @@ public final class BoomLifecycleIntegrationTest {
     private static final List<Heightmap.Types> HEIGHTMAPS = List.of(
         Heightmap.Types.WORLD_SURFACE, Heightmap.Types.OCEAN_FLOOR,
         Heightmap.Types.MOTION_BLOCKING, Heightmap.Types.MOTION_BLOCKING_NO_LEAVES);
+    private static final TicketType<ChunkPos> OBSERVATION = TicketType.create(
+        "perfomant_boom_lifecycle_observation", java.util.Comparator.comparingLong(ChunkPos::toLong));
     private static Run active;
 
     private BoomLifecycleIntegrationTest() {}
@@ -59,6 +63,7 @@ public final class BoomLifecycleIntegrationTest {
         int firstChanged;
         boolean completed;
         Partial saved;
+        final java.util.Set<ChunkPos> observedChunks = new java.util.HashSet<>();
 
         Run(MinecraftServer server) { this.server = server; this.level = server.overworld(); }
 
@@ -75,7 +80,7 @@ public final class BoomLifecycleIntegrationTest {
                                 BoomStateDigest.evidence().resolve("lifecycle-partial.json")), Partial.class);
                             require(BoomStateDigest.token().equals(saved.token()), "foreign partial evidence token");
                             require(saved.processed() > 0 && saved.processed() < saved.total(), "saved task was not partial");
-                            level.getChunkAt(CENTER); level.getChunkAt(CONTROL);
+                            holdObservationChunks();
                             move(Phase.RELOAD);
                         } else {
                             require("exercise".equals(mode), "unknown lifecycle mode");
@@ -136,12 +141,15 @@ public final class BoomLifecycleIntegrationTest {
                     }
                     case PARTIAL_PREPARE -> {
                         if (!settled()) break;
+                        holdObservationChunks();
                         fill(CENTER); fill(CONTROL);
                         move(Phase.PARTIAL_BASELINE);
                     }
                     case PARTIAL_BASELINE -> {
                         if (!settled()) break;
-                        level.getChunkAt(CONTROL);
+                        requireSameLight("baseline");
+                        require(BoomStateDigest.snapshot(level, CENTER, RADIUS).equals(
+                            BoomStateDigest.snapshot(level, CONTROL, RADIUS)), "partial/control baseline drift");
                         startPartial();
                         var progress = ExplosionScheduler.pendingMutation();
                         require(progress != null && !completed, "shutdown fixture finished instead of yielding");
@@ -180,6 +188,7 @@ public final class BoomLifecycleIntegrationTest {
                         var control = BoomStateDigest.snapshot(level, CONTROL, RADIUS);
                         require(actual.blocks().equals(saved.blocks()) && actual.air() == saved.air(),
                             "normal shutdown lost partial removals or completed pending work");
+                        requireSameLight("reload");
                         require(actual.equals(control), "partial-save block/light state differs from vanilla control: " + actual + " / " + control);
                         require(actual.maxBlockLight() == 0, "removed partial-slice glowstone still emits light");
                         LevelChunk chunk = level.getChunkAt(CENTER);
@@ -199,6 +208,42 @@ public final class BoomLifecycleIntegrationTest {
                 failure.printStackTrace();
                 stop(1);
             }
+        }
+
+        void holdObservationChunks() {
+            // DistanceManager.addRegionTicket uses FULL_LEVEL - radius. Radius zero
+            // keeps these 3x3 neighborhoods FULL (not block/entity ticking). Without
+            // observation tickets, the player-free fixture unloads while we wait,
+            // and getBlockState reloads it DURING hashing before light initialization.
+            // These tickets are absent throughout both deliberate unload scenarios.
+            for (BlockPos center : List.of(CENTER, CONTROL)) {
+                ChunkPos origin = new ChunkPos(center);
+                for (int x=-1;x<=1;x++) for (int z=-1;z<=1;z++) {
+                    ChunkPos pos = new ChunkPos(origin.x+x,origin.z+z);
+                    if (observedChunks.add(pos)) level.getChunkSource().addRegionTicket(OBSERVATION,pos,0,pos);
+                    level.getChunk(pos.x,pos.z);
+                }
+            }
+        }
+
+        void requireSameLight(String stage) {
+            var differences = new java.util.ArrayList<Map<String,Object>>();
+            int count = 0;
+            for (BlockPos pos : BlockPos.betweenClosed(CENTER.offset(-RADIUS,-RADIUS,-RADIUS),
+                CENTER.offset(RADIUS,RADIUS,RADIUS))) {
+                BlockPos other = pos.offset(64,0,0);
+                for (LightLayer layer : LightLayer.values()) {
+                    int actual = level.getBrightness(layer,pos), control = level.getBrightness(layer,other);
+                    if (actual != control) {
+                        count++;
+                        if (differences.size() < 32) differences.add(Map.of("position",pos.toShortString(),
+                            "layer",layer.toString(),"actual",actual,"control",control));
+                    }
+                }
+            }
+            BoomStateDigest.write("lifecycle-light-" + stage + ".json", Map.of("token",BoomStateDigest.token(),
+                "differenceCount",count,"examples",differences));
+            require(count == 0, stage + " light mismatch (" + count + " positions): " + differences);
         }
 
         boolean settled() { return ticks >= 40 && !level.getLightEngine().hasLightWork(); }
@@ -244,6 +289,8 @@ public final class BoomLifecycleIntegrationTest {
         void stop(int code) {
             if (phase == Phase.STOPPED) return;
             phase = Phase.STOPPED;
+            for (ChunkPos pos : observedChunks) level.getChunkSource().removeRegionTicket(OBSERVATION,pos,0,pos);
+            observedChunks.clear();
             Thread serverThread = Thread.currentThread();
             server.halt(false);
             Thread exit = new Thread(() -> {
