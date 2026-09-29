@@ -1,8 +1,7 @@
 # Multiversion source audit
 
-Base commits: Perfomant Boom `37ee29d`; Celestial Nail `7c807fb`, fetched from origin/main
-before implementation. The author-owned Nail terrain implementation and its behavioral
-regressions were transferred to Boom. Vanilla source is not redistributed.
+Boom baseline: `37ee29d`, fetched from origin/main before implementation. This audit
+records the library's version-specific behavior and validation. Vanilla source is not redistributed.
 
 ## Inspected behavior
 
@@ -36,8 +35,8 @@ reference. `vanilla-source-hashes.json` records the inspected inputs for reprodu
 
 Boom owns all three terrain passes (inside-out clearing, fluid purge, boundary repair),
 resumable cursors, per-level budgets, no-drop mutation, suppression mixins, and nonblocking
-chunk requests. Nail owns strike timing, visuals, special damage, its entity/NBT progress,
-cancellation and forced-chunk ownership transfer. Existing NBT cursor fields are preserved.
+chunk requests. Integrations own timing, visuals, damage, saved progress, cancellation
+and forced-chunk ownership transfer. Their application-specific state is outside the library.
 
 ## Limits
 
@@ -54,11 +53,8 @@ network behavior require live client validation in addition to builds and server
   and a scheduled explosion completed by the registered server tick listener.
 - Forge 1.20.1 production scheduler GameTest passed. Its development runs now explicitly
   disable production refmaps; packaged Forge refmaps were inspected and retain SRG names.
-- Nail `buildAll`, 20 remaining shared tests, and all 24 NeoForge 1.21.1 runtime tests passed
-  after extracting all three terrain passes and preserving saved cursor fields.
 - 36 release-tool tests and 26 live-harness tooling tests passed. Workflow YAML parses.
-- All five Boom JARs contain the shared API and matching mixins. All five Nail JARs declare
-  Boom as a dependency and contain neither duplicated API classes nor old mutation mixins.
+- All five Boom JARs contain the shared API and matching mixins.
 - Live client rendering/performance runs were not performed for the new targets.
 
 ModDevGradle JUnit setup follows its [official documentation](https://github.com/neoforged/ModDevGradle#unit-testing-with-junit).

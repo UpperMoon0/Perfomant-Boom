@@ -90,8 +90,8 @@ regressions run for Fabric's 1.21.1 common module and both NeoForge versions. Ne
 ModDevGradle's loader-aware JUnit environment. 26.1.2 additionally runs a real ephemeral
 server to verify container removal without drops and the production scheduler tick hook.
 
-After publishing Boom to Maven local, run Celestial Nail's complete build and its
-`:neoforge-1.21.1:runGameTestServer`. That suite verifies the consumer against the installed
-Boom mixins: saved progress, cancellation, shared budgets, light/POI/BE state, fluid purge,
-boundary support, no drops, and forced-chunk ownership. Do not interpret a successful build
-or server fixture as a live-client performance measurement for the new targets.
+Integration projects should test against the installed Boom mixins, covering saved progress,
+cancellation, shared budgets, light/POI/block-entity state, fluid purge, boundary support,
+no drops and forced-chunk ownership. Those projects own their test commands and results;
+they are not part of Boom's release gate. Do not interpret a successful build or server
+fixture as a live-client performance measurement for the new targets.

@@ -1,7 +1,7 @@
 # Shared terrain API
 
-Extracted from UpperMoon0/Celestial-Nail at 7c807fb. These operations deliberately implement
-Nail's bounded, no-drops terrain policy, not ordinary vanilla explosion physics.
+These operations implement bounded, no-drop administrative terrain editing,
+separate from ordinary vanilla explosion physics.
 
 `TerrainOperations` supplies version-specific mutation and persistent chunk requests.
 `TerrainPasses` supplies resumable fluid-purge and boundary passes; callers own their saved

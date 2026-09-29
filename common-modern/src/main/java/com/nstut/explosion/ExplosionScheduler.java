@@ -2,13 +2,9 @@ package com.nstut.explosion;
 
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.sounds.SoundEvents;
-import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
-import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Explosion;
 import net.minecraft.world.level.gameevent.GameEvent;
@@ -71,6 +67,9 @@ public final class ExplosionScheduler {
         FastExplosionEngine.IncrementalCalculation calculation;
         ObjectArrayList<BlockPos> order;
         List<Entity> entities;
+        List<net.minecraft.server.level.ServerPlayer> effectRecipients;
+        final java.util.Map<net.minecraft.server.level.ServerPlayer, Vec3> hitPlayers = new java.util.HashMap<>();
+        final java.util.Set<net.minecraft.server.level.ServerPlayer> effectsSent = new java.util.HashSet<>();
         boolean started, calculated, damaged;
         int entityIndex, blockIndex, changed, passes;
         long work, maximum;
@@ -91,6 +90,9 @@ public final class ExplosionScheduler {
             if (!calculated) {
                 if (!calculation.processUntil(deadline)) return false;
                 calculated=true;
+                // Freeze observers before entity callbacks or yields can change proximity/membership.
+                effectRecipients = level.players().stream()
+                        .filter(player -> player.distanceToSqr(center) < 4096.0).toList();
                 float diameter=power*2;
                 entities=level.getEntities(null, new AABB(Mth.floor(center.x-diameter-1),
                         Mth.floor(center.y-diameter-1), Mth.floor(center.z-diameter-1),
@@ -99,17 +101,25 @@ public final class ExplosionScheduler {
             }
             if (!damaged) {
                 while (entityIndex < entities.size()) {
-                    VanillaExplosionAdapter.hurt(level, explosion, entities.get(entityIndex++));
+                    Entity entity = entities.get(entityIndex++);
+                    VanillaExplosionAdapter.hurt(level, explosion, entity, hitPlayers);
+                    // Send the additive impulse in the same slice as the server velocity change.
+                    // The frozen audience is authoritative across yields; never retest live distance.
+                    if (entity instanceof net.minecraft.server.level.ServerPlayer player) {
+                        Vec3 impulse = hitPlayers.remove(player);
+                        if (impulse != null && player.level() == level && effectRecipients.contains(player)) {
+                            player.connection.send(VanillaExplosionAdapter.clientPacket(center, power, impulse));
+                            effectsSent.add(player);
+                        }
+                    }
                     if (System.nanoTime() >= deadline) return false;
                 }
                 damaged=true; entities=null;
                 order=new ObjectArrayList<>(calculation.affectedBlocks());
                 VanillaExplosionAdapter.shuffle(order, level.getRandom());
-                RandomSource effects=RandomSource.create();
-                level.playSound(null, center.x, center.y, center.z, SoundEvents.GENERIC_EXPLODE.value(),
-                        SoundSource.BLOCKS, 4, (1+(effects.nextFloat()-effects.nextFloat())*0.2F)*0.7F);
-                level.sendParticles(power < 2 ? ParticleTypes.EXPLOSION : ParticleTypes.EXPLOSION_EMITTER,
-                        center.x, center.y, center.z, 1, 0, 0, 0, 0);
+                VanillaExplosionAdapter.sendEffects(level, effectRecipients, center, power, effectsSent);
+                effectRecipients=null;
+                effectsSent.clear();
             }
             while (blockIndex < order.size()) {
                 BlockPos pos=order.get(blockIndex++);

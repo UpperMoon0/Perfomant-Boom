@@ -1,10 +1,22 @@
-# Shared terrain API
+# Explosion and terrain API reference
+
+For dependency snippets and integration examples, start with [INTEGRATION.md](../INTEGRATION.md). Pack authors and server operators should use [USAGE.md](../USAGE.md).
+
+## Scheduled explosion API
+
+`com.nstut.explosion.ExplosionScheduler` exposes `schedule(ServerLevel, Vec3, float)` and `scheduleTracked(ServerLevel, Vec3, float, Consumer<ExplosionMetrics>)` on all supported targets. Call on the server thread with finite coordinates and validated power (1–500 matches the command). Boom's loader hooks advance the queue; consumers must not add another scheduler driver.
+
+The optional completion callback runs on the server thread. Metrics expose changed blocks, ray samples, elapsed scheduler work/slice time, pass count and wall time. They do not measure CPU time or all downstream lighting/client work. Keep callbacks nonblocking and exception-safe. Discarded world tasks need not invoke completion; no public task handle or cancellation API is returned, and the queue is not serialized across restarts.
+
+These calls use Boom's explosion damage/effects and version-specific mutation policy. General vanilla loot and arbitrary modded explosion hooks are not guaranteed. The separate terrain passes below leave effects and damage to the consumer.
+
+## Shared terrain API
 
 This is the consumer contract for the `com.nstut.explosion.terrain` API introduced in Boom 1.1.0. It describes administrative no-drop operations, separate from the ordinary explosion scheduler.
 
 ## Dependency setup
 
-Build with `./gradlew buildAll publishToMavenLocal`. Consumers use Maven group `com.nstut` and version `1.1.0` with the matching artifact:
+Build with `./gradlew buildAll publishToMavenLocal`. Consumers use Maven group `com.nstut` and version `1.1.1` with the matching artifact:
 
 | Target | Runtime artifact ID |
 | --- | --- |
@@ -14,7 +26,7 @@ Build with `./gradlew buildAll publishToMavenLocal`. Consumers use Maven group `
 | NeoForge 1.21.1 | `perfomant_boom-neoforge-1.21.1` |
 | NeoForge 26.1.2 | `perfomant_boom-neoforge-26.1.2` |
 
-Loom common consumers compile against `perfomant_boom-common` or `perfomant_boom-common-1.21.1`; platform modules still need their matching runtime artifact. Follow Nail's `modCompileOnly`/`modImplementation` setup for Loom or `implementation` setup for ModDevGradle. This repository currently documents local publication, not a hosted Maven endpoint.
+Loom common consumers compile against `perfomant_boom-common` or `perfomant_boom-common-1.21.1`; platform modules still need their matching runtime artifact. Use `modCompileOnly`/`modImplementation` for Loom or `implementation` for ModDevGradle, as shown in [INTEGRATION.md](../INTEGRATION.md). This repository currently documents local publication, not a hosted Maven endpoint.
 
 Declare a real loader dependency too. Do not shade the API or mixins into a consumer: duplicate classes split the shared scopes and work allowances. Refresh consumer caches after republishing an unchanged version.
 
@@ -39,7 +51,7 @@ See the signatures and readiness requirements in [TerrainPasses.java](../terrain
 4. Save the mutated sphere cursor or returned `nextIndex` after each slice. A yield caused by an exhausted budget, unavailable chunk or cancellation does not mean the traversal is done.
 5. Accumulate the boundary `changed` flag across every slice of a pass. Start another full pass if anything changed; finish after an unchanged complete pass. Persist both index and accumulated change state.
 6. Manage chunk ownership, release and transfer. Requesting a chunk does not transfer lifetime management to Boom.
-7. Own any settling delays, repeated fluid sweeps, entity damage, visual effects and network synchronization. Nail is the reference consumer for those policies.
+7. Own any settling delays, repeated fluid sweeps, entity damage, visual effects and network synchronization.
 
 The current shared terrain allowance is 3,000 changes, 45,000 scans, one chunk request and an eight-millisecond cooperative window per level/tick. It gates the next operation and cannot preempt a slow callback. These limits are distinct from the ordinary explosion scheduler's allowance.
 
