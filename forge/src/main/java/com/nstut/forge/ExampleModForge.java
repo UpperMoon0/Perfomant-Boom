@@ -39,7 +39,14 @@ public final class ExampleModForge {
 
     private static final class ClientHooks {
         private static void register() {
+            net.minecraftforge.common.MinecraftForge.EVENT_BUS.addListener(ClientHooks::onRender);
             net.minecraftforge.common.MinecraftForge.EVENT_BUS.addListener(ClientHooks::onClientTick);
+        }
+
+        private static void onRender(net.minecraftforge.client.event.RenderLevelStageEvent event) {
+            if (event.getStage() == net.minecraftforge.client.event.RenderLevelStageEvent.Stage.AFTER_LEVEL) {
+                BoomClientIntegrationTest.onRenderedFrame();
+            }
         }
 
         private static void onClientTick(net.minecraftforge.event.TickEvent.ClientTickEvent event) {

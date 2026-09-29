@@ -7,6 +7,8 @@ import argparse
 import ctypes
 from ctypes import wintypes
 import json
+import hashlib
+import statistics
 import os
 from pathlib import Path
 import queue
@@ -29,8 +31,11 @@ FATAL = (
     "Failed to start the minecraft server",
     "Critical injection failure",
     "BUILD FAILED",
+    "redefining classes",
+    "Changes detected",
 )
-DEFAULT_TIMEOUT = 300
+DEFAULT_TIMEOUT = 900
+GUARD = lambda: None
 
 
 class OutputPump:
@@ -60,6 +65,7 @@ class OutputPump:
     def wait_for_any(self, markers, timeout: float, fail_markers=()):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
+            GUARD()
             for line in self.history:
                 if any(m in line for m in fail_markers):
                     raise RuntimeError(f"{self.prefix}: fatal output: {line.rstrip()}")
@@ -122,12 +128,12 @@ class WindowsInteractiveProcess:
         if self.returncode is not None:
             return self.returncode
         code = wintypes.DWORD()
-        if not ctypes.windll.kernel32.GetExitCodeProcess(self._handle, ctypes.byref(code)):
+        if not ctypes.windll.kernel32.GetExitCodeProcess(wintypes.HANDLE(self._handle), ctypes.byref(code)):
             raise ctypes.WinError()
         if code.value == 259:
             return None
         self.returncode = code.value
-        ctypes.windll.kernel32.CloseHandle(self._handle)
+        ctypes.windll.kernel32.CloseHandle(wintypes.HANDLE(self._handle))
         self._handle = 0
         return self.returncode
 
@@ -192,24 +198,11 @@ def current_and_interactive_session() -> tuple[int, int]:
     return current.value, target
 
 
-def command(root: Path, task: str, skip_common_rebuild: bool = False) -> list[str]:
+def command(root: Path, loader: str) -> list[str]:
     wrapper = root / ("gradlew.bat" if os.name == "nt" else "gradlew")
-    args = [
-        str(wrapper),
-        task,
-        "--no-daemon",
-        "--console=plain",
-        "--max-workers=4",
-        "-Dorg.gradle.jvmargs=-Xmx1280m",
-    ]
-    if skip_common_rebuild:
-        args += [
-            "-x", ":common:compileJava",
-            "-x", ":common:processResources",
-            "-x", ":common:classes",
-            "-x", ":common:jar",
-        ]
-    return args
+    return [str(wrapper), f":{loader}:runLiveBoomTestServer", f":{loader}:runLiveBoomTestClient",
+            "-I", str(root / "tools" / "export_live_launch.gradle"), "--no-daemon", "--console=plain",
+            "--max-workers=2", "-Dorg.gradle.jvmargs=-Xmx1280m"]
 
 
 def popen(cmd, root: Path, env: dict[str, str]):
@@ -343,18 +336,18 @@ def stop_tree(process, graceful_server=False):
 
 
 def prepare_server(root: Path, loader: str, port: int, run_id: str):
-    shutil.rmtree(root / loader / ".gradle" / "architectury", ignore_errors=True)
     run_dir = root / loader / "run" / "live-boom" / run_id / "server"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    shutil.rmtree(run_dir / "world", ignore_errors=True)
+    run_dir.mkdir(parents=True, exist_ok=False)
     (run_dir / "eula.txt").write_text("eula=true\n", encoding="utf-8")
     (run_dir / "server.properties").write_text(
         "\n".join([
             f"server-port={port}",
+            "server-ip=127.0.0.1",
             "online-mode=false",
             "level-name=world",
             "level-seed=perfomant-boom-e2e",
             "level-type=minecraft:flat",
+            'generator-settings={"biome":"minecraft:plains","layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:dirt","height":2},{"block":"minecraft:grass_block","height":1}]}',
             "gamemode=creative",
             "difficulty=peaceful",
             "spawn-protection=0",
@@ -391,94 +384,197 @@ def find_free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def run(loader: str, timeout: int) -> int:
+class FrozenInputs:
+    """Reject any source, compiled-class, development-JAR or launch-config drift.
+
+    Hashes are retained in evidence. Runtime polling compares stat identities; the
+    final digest pass also catches same-size modifications and timestamp restoration.
+    """
+    def __init__(self, root: Path, extra_paths=()):
+        self.root = root
+        self.extra_paths = tuple(extra_paths)
+        self.paths = self.inventory()
+        self.stats = self.stat_all()
+        self.hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in self.paths}
+
+    def inventory(self):
+        paths = set(self.extra_paths) | set(p for p in self.root.iterdir() if p.is_file() and p.name != '.git')
+        for directory in ('tools', '.github', 'gradle', 'common/src', 'fabric/src', 'forge/src',
+                          'common/build/classes', 'common/build/resources', 'common/build/devlibs', 'common/build/libs',
+                          '.gradle/architectury', 'fabric/.gradle/architectury', 'forge/.gradle/architectury',
+                          'fabric/build/classes', 'fabric/build/resources', 'fabric/build/devlibs', 'fabric/build/libs',
+                          'forge/build/classes', 'forge/build/resources', 'forge/build/devlibs', 'forge/build/libs'):
+            for p in (self.root / directory).rglob('*'):
+                if p.is_file() and '__pycache__' not in p.parts:
+                    paths.add(p)
+        return sorted(paths)
+
+    def stat_all(self):
+        return {p: (p.stat().st_size, p.stat().st_mtime_ns) for p in self.paths}
+
+    def check(self):
+        if self.inventory() != self.paths or self.stat_all() != self.stats:
+            raise RuntimeError('Source or runtime artifacts changed during the frozen run')
+
+    def verify_hashes(self):
+        self.check()
+        for p in self.paths:
+            if hashlib.sha256(p.read_bytes()).hexdigest() != self.hashes[str(p.relative_to(self.root))]:
+                raise RuntimeError(f'Content drift during the frozen run: {p}')
+
+
+def assert_successful_exit(process, pump: OutputPump, timeout: float):
+    deadline = time.monotonic() + timeout
+    while process.poll() is None:
+        GUARD()
+        if time.monotonic() > deadline:
+            raise RuntimeError(f'{pump.prefix}: gameplay marker received but clean shutdown timed out')
+        time.sleep(0.25)
+    pump._thread.join(timeout=10)
+    if pump._thread.is_alive():
+        raise RuntimeError(f'{pump.prefix}: log stream did not drain')
+    if process.returncode != 0:
+        raise RuntimeError(f'{pump.prefix}: nonzero exit {process.returncode} after gameplay')
+    for line in pump.history:
+        if any(marker in line for marker in FATAL + (SERVER_FAIL, CLIENT_FAIL)):
+            raise RuntimeError(f'{pump.prefix}: fatal output even though a PASS marker appeared: {line.strip()}')
+
+
+def summarize(evidence: Path) -> list[dict]:
+    samples = json.loads((evidence / 'server-samples.json').read_text(encoding='utf-8'))
+    if len(samples) != 34:
+        raise ValueError(f'Expected 34 raw server samples, found {len(samples)}')
+    grouped = {}
+    for sample in samples:
+        t = sample['trial']
+        client = json.loads((evidence / f"client-sample-{t['index']:02d}.json").read_text(encoding='utf-8'))
+        if client['actual'] != sample['authoritative'] or client['postConvergenceFrames'] < 2:
+            raise ValueError('Missing exact real-client state/render evidence')
+        if t['warmup']:
+            continue
+        key = (t['scenario'], t['fast'])
+        grouped.setdefault(key, []).append((sample, client))
+    summary = []
+    for (scenario, fast), values in grouped.items():
+        row = {'scenario': scenario, 'engine': 'fast' if fast else 'vanilla', 'samples': len(values)}
+        for field in ('activeWorkMs', 'maxObservedServerTickMs', 'clientAcknowledgedWallMs'):
+            raw = sorted(v[0][field] for v in values)
+            row[field] = {'median': statistics.median(raw), 'min': min(raw), 'max': max(raw),
+                          'q1': raw[(len(raw)-1)//4], 'q3': raw[(3*(len(raw)-1)+3)//4]}
+        row['maxObservedFrameGapMs'] = max(v[1]['maxObservedFrameGapMs'] for v in values)
+        row['medianChangedBlocks'] = statistics.median(v[0]['authoritative']['air'] for v in values)
+        summary.append(row)
+    return summary
+
+
+def run(loader: str, timeout: int, require_clean: bool = False) -> int:
+    global GUARD
     root = Path(__file__).resolve().parents[1]
-    lock_path = root / "build" / "live-boom.lock"
+    lock_path = root / 'build' / 'live-boom.lock'
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
-        owner = lock_path.read_text(encoding="utf-8", errors="replace").strip()
-        print(f"PERFOMANT_BOOM_LIVE_TEST_FAIL another live benchmark owns {lock_path}: {owner}", file=sys.stderr)
+        print(f'PERFOMANT_BOOM_LIVE_TEST_FAIL checkout already locked: {lock_path}', file=sys.stderr)
         return 2
-
-    os.write(lock_fd, f"pid={os.getpid()} loader={loader}\n".encode("utf-8"))
-    port = find_free_port()
-    run_id = f"{int(time.time() * 1000)}-{os.getpid()}"
-    prepare_server(root, loader, port, run_id)
-
-    evidence = root / "build" / "live-boom-evidence" / loader
-    shutil.rmtree(evidence, ignore_errors=True)
-    evidence.mkdir(parents=True, exist_ok=True)
-
-    env = os.environ.copy()
-    env["PERFOMANT_BOOM_TEST_PORT"] = str(port)
-    env["PERFOMANT_BOOM_TEST_RUN"] = run_id
-
-    server = None
-    client = None
+    os.write(lock_fd, f'pid={os.getpid()} loader={loader}\n'.encode())
+    run_id = f'{int(time.time()*1000)}-{os.getpid()}'
+    evidence = root / 'build' / 'live-boom-evidence' / loader / run_id
+    evidence.mkdir(parents=True, exist_ok=False)
+    processes = []
+    result = {'loader': loader, 'run_id': run_id, 'gameplay_pass': False, 'clean_shutdown': False,
+              'persistence_pass': False, 'source_unchanged': False, 'forced_cleanup': False}
     started = time.monotonic()
     try:
-        server = popen(command(root, f":{loader}:runLiveBoomTestServer"), root, env)
-        server_out = OutputPump(server, "server", evidence / "server.log")
-        server_out.wait_for_any(SERVER_READY, timeout, FATAL + (SERVER_FAIL,))
-
-        client, client_out = launch_client(
-            command(root, f":{loader}:runLiveBoomTestClient", skip_common_rebuild=True),
-            root, env, evidence / "client.log"
-        )
-
-        server_line = server_out.wait_for_any((SERVER_PASS,), timeout, FATAL + (SERVER_FAIL,))
-        client_line = client_out.wait_for_any((CLIENT_PASS,), timeout, FATAL + (CLIENT_FAIL,))
-
-        result = {
-            "loader": loader,
-            "run_id": run_id,
-            "port": port,
-            "elapsed_seconds": round(time.monotonic() - started, 3),
-            "server": parse_fields(server_line),
-            "client": parse_fields(client_line),
-            "git_head": subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], cwd=root, text=True
-            ).strip(),
-            "git_dirty": bool(subprocess.check_output(
-                ["git", "status", "--porcelain"], cwd=root, text=True
-            ).strip()),
-        }
-        (evidence / "result.json").write_text(
-            json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
-        print("PERFOMANT_BOOM_LIVE_TEST_PASS " + json.dumps(result, sort_keys=True))
-        return 0
+        result['git_head'] = subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
+        result['git_dirty'] = bool(subprocess.check_output(['git','status','--porcelain'],cwd=root,text=True).strip())
+        if require_clean and result['git_dirty']:
+            raise RuntimeError('Release verification requires a clean checkout')
+        port = find_free_port()
+        result['port'] = port
+        env = os.environ.copy()
+        env.update(PERFOMANT_BOOM_TEST_PORT=str(port), PERFOMANT_BOOM_TEST_RUN=run_id,
+                   PERFOMANT_BOOM_EVIDENCE=str(evidence))
+        prepare_server(root, loader, port, run_id)
+        client_dir = root / loader / 'run' / 'live-boom' / run_id / 'client'
+        client_dir.mkdir(parents=True, exist_ok=False)
+        (client_dir / 'options.txt').write_text('renderDistance:10\nmaxFps:60\ngraphicsMode:0\npauseOnLostFocus:false\n',encoding='utf-8')
+        # Finish BOTH launch task dependencies before either Minecraft JVM starts.
+        with (evidence / 'prepare.log').open('w', encoding='utf-8') as log:
+            prep = popen(command(root, loader), root, env)
+            processes.append(prep)
+            pump = OutputPump(prep, 'prepare', evidence / 'gradle.log')
+            assert_successful_exit(prep, pump, max(900, timeout))
+        specs = {side: json.loads((evidence/f'{side}-launch.json').read_text(encoding='utf-8')) for side in ('server','client')}
+        launch_files = [p for p in (evidence/'frozen-launch').rglob('*') if p.is_file()]
+        launch_files += list((root/loader/'.gradle/loom-cache').glob('*.cfg'))
+        frozen = FrozenInputs(root, launch_files)
+        (evidence/'frozen-inputs.json').write_text(json.dumps(frozen.hashes,indent=2)+'\n',encoding='utf-8')
+        GUARD = frozen.check
+        server_spec = specs['server']
+        server = popen(server_spec['command'], Path(server_spec['cwd']), env | server_spec['environment'])
+        processes.append(server)
+        server_out = OutputPump(server, 'server', evidence/'server.log')
+        server_out.wait_for_any(SERVER_READY, timeout, FATAL+(SERVER_FAIL,))
+        client_spec = specs['client']
+        client, client_out = launch_client(client_spec['command'],Path(client_spec['cwd']),
+                                          env | client_spec['environment'],evidence/'client.log')
+        processes.append(client)
+        def guard_peers():
+            frozen.check()
+            for peer in (server_out, client_out):
+                for line in peer.history:
+                    if any(marker in line for marker in FATAL+(SERVER_FAIL,CLIENT_FAIL,"Kicked for spamming")):
+                        raise RuntimeError(f'{peer.prefix}: {line.strip()}')
+        GUARD = guard_peers
+        client_out.wait_for_any((CLIENT_PASS,), timeout, FATAL+(CLIENT_FAIL,))
+        server_out.wait_for_any((SERVER_PASS,), timeout, FATAL+(SERVER_FAIL,))
+        result['gameplay_pass'] = True
+        assert_successful_exit(client,client_out,120)
+        assert_successful_exit(server,server_out,120)
+        result['clean_shutdown'] = True
+        # Relaunch the same saved world in a FRESH server process; do not regenerate fixtures.
+        reload_env = env | server_spec['environment'] | {'PERFOMANT_BOOM_RELOAD': '1'}
+        reload_server = popen(server_spec['command'], Path(server_spec['cwd']),reload_env)
+        processes.append(reload_server)
+        reload_out = OutputPump(reload_server,'reload',evidence/'reload-server.log')
+        reload_out.wait_for_any(('PERFOMANT_BOOM_E2E_PERSISTENCE_PASS',),timeout,FATAL+(SERVER_FAIL,))
+        assert_successful_exit(reload_server,reload_out,120)
+        result['persistence_pass'] = True
+        frozen.verify_hashes()
+        result['source_unchanged'] = True
+        result['summary'] = summarize(evidence)
+        result['pass'] = True
     except Exception as exc:
-        result = {
-            "loader": loader,
-            "run_id": run_id,
-            "port": port,
-            "elapsed_seconds": round(time.monotonic() - started, 3),
-            "error": str(exc),
-        }
-        (evidence / "result.json").write_text(
-            json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
-        print(f"PERFOMANT_BOOM_LIVE_TEST_FAIL {exc}", file=sys.stderr)
-        return 1
+        result['pass'] = False
+        result['error'] = str(exc)
     finally:
-        if client is not None:
-            stop_tree(client)
-        if server is not None:
-            stop_tree(server, graceful_server=False)
+        GUARD = lambda: None
+        for process in reversed(processes):
+            if process.poll() is None:
+                result['forced_cleanup'] = True
+                result['pass'] = False
+                stop_tree(process)
+        result['elapsed_seconds'] = round(time.monotonic()-started,3)
+        (evidence/'result.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n',encoding='utf-8')
         os.close(lock_fd)
         lock_path.unlink(missing_ok=True)
+    marker = 'PASS' if result.get('pass') else 'FAIL'
+    print(f'PERFOMANT_BOOM_LIVE_TEST_{marker} '+json.dumps(result,sort_keys=True),flush=True)
+    print(f'Evidence: {evidence}',flush=True)
+    return 0 if result.get('pass') else 1
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--loader", choices=("fabric", "forge"), default="fabric")
-    parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
-    args = parser.parse_args()
-    return run(args.loader, args.timeout)
+    parser.add_argument('--loader',choices=('fabric','forge'),default='fabric')
+    parser.add_argument('--timeout',type=int,default=DEFAULT_TIMEOUT)
+    parser.add_argument('--require-clean',action='store_true')
+    args=parser.parse_args()
+    if args.timeout <= 0:
+        parser.error('--timeout must be positive')
+    return run(args.loader,args.timeout,args.require_clean)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     raise SystemExit(main())

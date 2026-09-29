@@ -31,14 +31,7 @@ public final class ExampleMod {
     }
 
     public static void registerCommands(com.mojang.brigadier.CommandDispatcher<net.minecraft.commands.CommandSourceStack> dispatcher) {
-        if (BoomServerIntegrationTest.isArmed()) {
-            dispatcher.register(Commands.literal("perfomant_boom_live_ready")
-                .executes(context -> {
-                    BoomServerIntegrationTest.markClientReady();
-                    return 1;
-                })
-            );
-        }
+        BoomServerIntegrationTest.registerCommands(dispatcher);
 
         dispatcher.register(Commands.literal("boom")
             .requires(source -> source.hasPermission(2))

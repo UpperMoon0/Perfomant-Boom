@@ -26,6 +26,19 @@ class FastExplosionEngineTest {
     }
 
     @Test
+    void runtimeReservesVanillaLevelRandomRaySequence() {
+        var level = org.mockito.Mockito.mock(net.minecraft.server.level.ServerLevel.class);
+        var actual = RandomSource.create(0xB00B5EEDL);
+        var expected = RandomSource.create(0xB00B5EEDL);
+        org.mockito.Mockito.when(level.getRandom()).thenReturn(actual);
+        FastExplosionEngine.create(level, new Vec3(0.5, 96.5, 0.5), 10);
+        // The 16-cube boundary contains 16^3 - 14^3 = 1352 rays.
+        for (int i=0; i<1352; i++) expected.nextFloat();
+        org.junit.jupiter.api.Assertions.assertEquals(expected.nextFloat(), actual.nextFloat());
+        org.mockito.Mockito.verify(level).getRandom();
+    }
+
+    @Test
     void matchesVanillaRaySelectionForNonAirBlocks() {
         FastExplosionEngine.BlockView world = world(pos -> {
             if (pos.getY() < -3) {

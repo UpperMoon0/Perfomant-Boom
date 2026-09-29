@@ -35,12 +35,14 @@ public final class FastExplosionEngine {
     private FastExplosionEngine() {
     }
 
+    // Vanilla 1.20.1 Explosion#explode draws ray strengths from the LEVEL RNG.
+    // Reserve the same sequence before yielding; never change gameplay RNG for a benchmark.
     public static IncrementalCalculation create(ServerLevel level, Vec3 center, float power) {
         return new IncrementalCalculation(
             new ServerWorldView(level),
             center,
             power,
-            RandomSource.create()
+            level.getRandom()
         );
     }
 

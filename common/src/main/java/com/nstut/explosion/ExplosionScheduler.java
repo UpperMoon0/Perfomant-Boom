@@ -42,8 +42,8 @@ public final class ExplosionScheduler {
     private static final Direction[] DIRECTIONS = Direction.values();
 
     /**
-     * Hard budget for this mod's explosion work in one END_SERVER_TICK pass.
-     * Expensive chunk loads can individually exceed this, but CPU work is bounded.
+     * Cooperative target for this mod's explosion work in one END_SERVER_TICK pass.
+     * Individual chunk loads, callbacks and finalization can exceed this target.
      */
     private static final long WORK_BUDGET_NANOS = 4_000_000L;
     private static MinecraftServer activeServer;
@@ -51,10 +51,13 @@ public final class ExplosionScheduler {
     private ExplosionScheduler() {
     }
 
+    /** workMs is elapsed time inside scheduler calls, NOT thread/process CPU time.
+     * Downstream lighting, networking and client work are measured separately by integration tests.
+     */
     public record ExplosionMetrics(
         int changedBlocks,
         long raySamples,
-        double cpuMs,
+        double workMs,
         double maxSliceMs,
         int workPasses,
         double wallMs
@@ -73,7 +76,7 @@ public final class ExplosionScheduler {
     ) {
         long start = System.nanoTime();
         ExplosionTask task = new ExplosionTask(level, center, power, completion);
-        task.cpuNanos += System.nanoTime() - start;
+        task.workNanos += System.nanoTime() - start;
         TASK_QUEUE.add(task);
     }
 
@@ -146,7 +149,7 @@ public final class ExplosionScheduler {
         private int nextEntityIndex;
         private boolean entityDamageFinished;
         private Explosion blockCallbackExplosion;
-        private long cpuNanos;
+        private long workNanos;
         private long maxSliceNanos;
         private int workPasses;
         private double finishedWallMs;
@@ -166,7 +169,7 @@ public final class ExplosionScheduler {
         }
 
         private void recordSlice(long elapsedNanos) {
-            cpuNanos += elapsedNanos;
+            workNanos += elapsedNanos;
             maxSliceNanos = Math.max(maxSliceNanos, elapsedNanos);
             workPasses++;
         }
@@ -503,22 +506,22 @@ public final class ExplosionScheduler {
             }
             completionNotified = true;
 
-            double cpuMs = cpuNanos / 1_000_000.0D;
+            double workMs = workNanos / 1_000_000.0D;
             double maxSliceMs = maxSliceNanos / 1_000_000.0D;
             ExampleMod.LOGGER.info(
-                "Explosion finished: {} blocks changed at {} (power {}) in {}ms wall-clock, {}ms CPU, max {}ms/tick",
+                "Explosion finished: {} blocks changed at {} (power {}) in {}ms wall-clock, {}ms active work, max {}ms/tick",
                 actualChangedBlocks,
                 center,
                 power,
                 String.format("%.2f", finishedWallMs),
-                String.format("%.2f", cpuMs),
+                String.format("%.2f", workMs),
                 String.format("%.2f", maxSliceMs)
             );
             if (completion != null) {
                 completion.accept(new ExplosionMetrics(
                     actualChangedBlocks,
                     calculation.sampleCount(),
-                    cpuMs,
+                    workMs,
                     maxSliceMs,
                     workPasses,
                     finishedWallMs

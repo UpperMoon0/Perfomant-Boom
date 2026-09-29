@@ -25,3 +25,7 @@ Existing tags must point at the exact release commit. A tag pointing elsewhere i
 Publication stages a GitHub draft, uploads the complete artifact set, and only then makes it public. A retry may finish that draft. An already-public GitHub release is not overwritten: its recorded checksums must match the rebuilt same-commit artifacts. Failed or partial CurseForge uploads are subject to the service's duplicate-upload behavior; inspect those uploads before retrying.
 
 No publication has been performed merely by opening the PR. Do not merge the draft to force a release while runtime verification is outstanding.
+
+## Mandatory runtime validation
+
+The shared checks now include Forge GameTest and frozen real-client/persistence jobs for both Fabric and Forge. A version bump cannot publish if either loader fails these jobs. Keep runtime evidence with the workflow. No release has been executed merely by opening or updating this PR.

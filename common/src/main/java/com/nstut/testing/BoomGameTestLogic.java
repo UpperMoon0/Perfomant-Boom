@@ -13,6 +13,7 @@ public final class BoomGameTestLogic {
     }
 
     public static void explosionMaintainsWorldBookkeeping(GameTestHelper helper) {
+        var completed = new java.util.concurrent.atomic.AtomicInteger();
         BlockPos localCenter = new BlockPos(4, 4, 4);
         BlockPos localChest = localCenter.offset(1, 0, 0);
         BlockPos localControl = localCenter.offset(4, 4, 4);
@@ -62,6 +63,7 @@ public final class BoomGameTestLogic {
                 ),
                 5.0F,
                 metrics -> {
+                    if (completed.incrementAndGet() != 1) helper.fail("completion fired more than once");
                     if (metrics.changedBlocks() <= 0) {
                         helper.fail("explosion changed no blocks");
                     }
@@ -70,6 +72,7 @@ public final class BoomGameTestLogic {
         });
 
         helper.succeedWhen(() -> {
+            if (completed.get() != 1) throw new GameTestAssertException("scheduler has not completed all deferred updates");
             helper.assertBlockState(localCenter, state -> state.isAir(), () -> "center glowstone still present");
             helper.assertBlockState(localChest, state -> state.isAir(), () -> "center-adjacent chest still present");
             helper.assertBlockState(localControl, state -> state.is(Blocks.BEDROCK), () -> "bedrock boundary control was destroyed");

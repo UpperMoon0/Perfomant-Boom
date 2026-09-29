@@ -1,6 +1,11 @@
 package com.nstut.testing;
 
+import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import com.nstut.explosion.ExplosionScheduler;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.Commands;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -11,584 +16,260 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import java.util.*;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
-
+/** Real Level.explode versus the production scheduler, with exact seeded craters and
+ * a network command acknowledgement of every client block/light digest. No timing assertions.
+ */
 public final class BoomServerIntegrationTest {
     public static final String PROPERTY = "perfomant_boom.liveTest";
-    public static final String FIXTURE_READY_MARKER = "PERFOMANT_BOOM_E2E_FIXTURE_READY";
-    public static final String SERVER_PASS_MARKER = "PERFOMANT_BOOM_E2E_SERVER_PASS";
-    public static final String SERVER_FAIL_MARKER = "PERFOMANT_BOOM_E2E_SERVER_FAIL";
-
-    public static final int FIXTURE_RADIUS = 12;
-    public static final int SHELL_RADIUS = FIXTURE_RADIUS + 1;
-    public static final float POWER = 10.0F;
-    public static final int WARMUP_PAIRS = 3;
-    public static final int MEASURED_TRIALS = 5;
-    public static final int TOTAL_PAIRS = WARMUP_PAIRS + MEASURED_TRIALS;
-    public static final BlockPos CLIENT_POSITION = new BlockPos(0, 120, 0);
-    public static final BlockPos CLIENT_DONE_MARKER = new BlockPos(0, 118, 4);
-
-    private static final int PAIR_SETTLE_TICKS = 5;
-    private static final int FAST_POST_SETTLE_TICKS = 5;
-    private static final int BASELINE_TICKS = 100;
-
-    private static final BlockPos[] NO_DROPS_VANILLA = fixtureRow(0);
-    private static final BlockPos[] NO_DROPS_FAST = fixtureRow(1);
-    private static final BlockPos[] DEFAULT_VANILLA = fixtureRow(2);
-    private static final BlockPos[] DEFAULT_FAST = fixtureRow(3);
-    private static final BlockPos[] ALL_FIXTURES = concatFixtures();
-
-    private static MinecraftServer activeServer;
-    private static Phase phase = Phase.PREPARE;
-    private static long tickStartNanos;
-    private static int phaseTicks;
-    private static int pairIndex;
-    private static boolean teleported;
-    private static boolean clientReady;
-    private static boolean originalDoBlockDrops;
-
-    private static double currentVanillaMs;
-    private static double currentVanillaTickMs;
-    private static int currentVanillaBlocks;
-    private static ExplosionScheduler.ExplosionMetrics currentFastMetrics;
-    private static double currentFastTickTotalMs;
-    private static double currentFastMaxTickMs;
-    private static int currentFastTickCount;
-
-    private static final List<Double> baselineTicks = new ArrayList<>();
-    private static final List<Double> noDropsVanillaMs = new ArrayList<>();
-    private static final List<Double> noDropsVanillaTickMs = new ArrayList<>();
-    private static final List<Double> noDropsFastCpuMs = new ArrayList<>();
-    private static final List<Double> noDropsFastWallMs = new ArrayList<>();
-    private static final List<Double> noDropsFastMaxSliceMs = new ArrayList<>();
-    private static final List<Double> noDropsFastMaxServerTickMs = new ArrayList<>();
-    private static final List<Double> noDropsFastObservedTickTotalMs = new ArrayList<>();
-    private static final List<Integer> noDropsFastObservedTickCount = new ArrayList<>();
-    private static final List<Integer> noDropsVanillaBlocks = new ArrayList<>();
-    private static final List<Integer> noDropsFastBlocks = new ArrayList<>();
-    private static final List<Long> noDropsRaySamples = new ArrayList<>();
-    private static final List<Double> defaultVanillaMs = new ArrayList<>();
-    private static final List<Double> defaultVanillaTickMs = new ArrayList<>();
-    private static final List<Double> defaultFastCpuMs = new ArrayList<>();
-    private static final List<Double> defaultFastWallMs = new ArrayList<>();
-    private static final List<Double> defaultFastMaxSliceMs = new ArrayList<>();
-    private static final List<Double> defaultFastMaxServerTickMs = new ArrayList<>();
-    private static final List<Double> defaultFastObservedTickTotalMs = new ArrayList<>();
-    private static final List<Integer> defaultFastObservedTickCount = new ArrayList<>();
-    private static final List<Integer> defaultVanillaBlocks = new ArrayList<>();
-    private static final List<Integer> defaultFastBlocks = new ArrayList<>();
-    private static final List<Long> defaultRaySamples = new ArrayList<>();
-    private static final List<Integer> defaultVanillaDropCounts = new ArrayList<>();
-
-    private BoomServerIntegrationTest() {}
-
-    public static boolean isArmed() {
-        return Boolean.parseBoolean(System.getProperty(PROPERTY, "false"));
+    public static final int WARMUPS=3, MEASURED=5;
+    public record Trial(int index, String scenario, int pair, boolean warmup, boolean fast,
+                        int x, int y, int z, int radius, float power, long seed) {
+        public BlockPos center() { return new BlockPos(x,y,z); }
     }
-
-    public static BlockPos[] fixtureCenters() { return ALL_FIXTURES.clone(); }
-    public static BlockPos finalNoDropsVanillaCenter() { return NO_DROPS_VANILLA[NO_DROPS_VANILLA.length - 1]; }
-    public static BlockPos finalNoDropsFastCenter() { return NO_DROPS_FAST[NO_DROPS_FAST.length - 1]; }
-    public static BlockPos finalDefaultVanillaCenter() { return DEFAULT_VANILLA[DEFAULT_VANILLA.length - 1]; }
-    public static BlockPos finalDefaultFastCenter() { return DEFAULT_FAST[DEFAULT_FAST.length - 1]; }
-
+    public record Expected(String token, Trial trial, BoomStateDigest.Snapshot expected) {}
+    private enum Phase { PREPARE, JOIN, BASELINE, BEGIN, RUN, ENGINE, SETTLE, ACK, SHUTDOWN, PERSIST, FAILED }
+    private static final List<Trial> TRIALS=trials();
+    private static final List<Map<String,Object>> samples=new ArrayList<>();
+    private static final List<Double> tickMs=new ArrayList<>();
+    private static final Map<String,BoomStateDigest.Snapshot> paired=new HashMap<>();
+    private static MinecraftServer activeServer;
+    private static ServerPlayer observer;
+    private static Phase phase=Phase.PREPARE;
+    private static int next, ticks, shutdownTicks;
+    private static boolean ready, begun, originalDrops, clientDone, stopping;
+    private static long tickStart, explosionStart;
+    private static double activeWorkMs, scheduleWallMs;
+    private static ExplosionScheduler.ExplosionMetrics metrics;
+    private static Expected expected;
+    private BoomServerIntegrationTest() {}
+    public static boolean isArmed() { return Boolean.getBoolean(PROPERTY); }
+    public static List<Trial> fixtures() { return TRIALS; }
+    public static void registerCommands(CommandDispatcher<CommandSourceStack> dispatcher) {
+        if (!isArmed()) return;
+        dispatcher.register(Commands.literal("perfomant_boom_live_ready").executes(c -> {
+            if (observer != null && c.getSource().getEntity()==observer) ready=true;
+            return 1;
+        }));
+        dispatcher.register(Commands.literal("perfomant_boom_live_begin")
+            .then(Commands.argument("index",IntegerArgumentType.integer(0)).executes(c -> {
+                if (c.getSource().getEntity()==observer && phase==Phase.BEGIN && IntegerArgumentType.getInteger(c,"index")==next) begun=true;
+                return 1;
+            })));
+        dispatcher.register(Commands.literal("perfomant_boom_live_ack")
+            .then(Commands.argument("index",IntegerArgumentType.integer(0))
+                .then(Commands.argument("token",StringArgumentType.word())
+                    .then(Commands.argument("blocks",StringArgumentType.word())
+                        .then(Commands.argument("light",StringArgumentType.word()).executes(c -> {
+                            if (c.getSource().getEntity()!=observer) return 0;
+                            acknowledge(IntegerArgumentType.getInteger(c,"index"),StringArgumentType.getString(c,"token"),
+                                StringArgumentType.getString(c,"blocks"),StringArgumentType.getString(c,"light"));
+                            return 1;
+                        }))))));
+        dispatcher.register(Commands.literal("perfomant_boom_live_done").executes(c -> {
+            if (c.getSource().getEntity()==observer && phase==Phase.SHUTDOWN) {
+                clientDone=true;
+                BoomStateDigest.write("client-receipt.json",Map.of("token",BoomStateDigest.token(),"samples",samples.size()));
+            }
+            return 1;
+        }));
+    }
     public static void onServerTickStart(MinecraftServer server) {
         if (!isArmed()) return;
-        if (activeServer != server) reset(server);
-        tickStartNanos = System.nanoTime();
+        if (activeServer!=server) {
+            activeServer=server; observer=null; phase=Phase.PREPARE; next=0; ticks=0;
+            ready=false; begun=false; clientDone=false; stopping=false; samples.clear(); paired.clear(); tickMs.clear();
+        }
+        tickStart=System.nanoTime();
     }
-
     public static void tick(MinecraftServer server) {
         if (!isArmed()) return;
-        if (activeServer != server) reset(server);
-
-        double currentTickMs = tickStartNanos == 0L
-            ? 0.0D
-            : (System.nanoTime() - tickStartNanos) / 1_000_000.0D;
-
-        if (phase == Phase.WAIT_NO_DROPS_FAST
-            || phase == Phase.SETTLE_NO_DROPS_FAST
-            || phase == Phase.WAIT_DEFAULT_FAST
-            || phase == Phase.SETTLE_DEFAULT_FAST) {
-            currentFastTickTotalMs += currentTickMs;
-            currentFastMaxTickMs = Math.max(currentFastMaxTickMs, currentTickMs);
-            currentFastTickCount++;
-        }
-
+        // Measured START -> END hook duration excludes the oracle/hash/file-I/O below.
+        double observed=(System.nanoTime()-tickStart)/1_000_000.0;
+        boolean measure=phase==Phase.RUN || phase==Phase.ENGINE || phase==Phase.SETTLE;
+        double inlineWork=0;
         try {
+            ServerLevel level=server.overworld();
+            ticks++;
             switch (phase) {
-                case PREPARE -> prepare(server.overworld());
-                case WAIT_FOR_CLIENT -> waitForClient(server);
-                case SETTLE_CLIENT -> settleClient();
-                case COLLECT_BASELINE -> collectBaseline(currentTickMs);
-                case RUN_NO_DROPS_VANILLA -> runVanilla(
-                    server.overworld(), NO_DROPS_VANILLA[pairIndex], false, currentTickMs);
-                case WAIT_AFTER_NO_DROPS_VANILLA -> waitThenRunFast(
-                    server.overworld(), NO_DROPS_FAST[pairIndex], Phase.WAIT_NO_DROPS_FAST);
-                case WAIT_NO_DROPS_FAST -> awaitFast(Phase.SETTLE_NO_DROPS_FAST);
-                case SETTLE_NO_DROPS_FAST -> settleNoDrops(server.overworld());
-                case RUN_DEFAULT_VANILLA -> runDefaultVanilla(server.overworld(), currentTickMs);
-                case WAIT_AFTER_DEFAULT_VANILLA -> waitThenRunDefaultFast(server.overworld());
-                case WAIT_DEFAULT_FAST -> awaitFast(Phase.SETTLE_DEFAULT_FAST);
-                case SETTLE_DEFAULT_FAST -> settleDefault(server.overworld());
-                case DONE, FAILED -> {}
-            }
-        } catch (Throwable t) {
-            fail("exception=" + t.getClass().getName() + " message=" + t.getMessage());
-            t.printStackTrace(System.err);
-        }
-    }
-
-    public static void markClientReady() {
-        if (isArmed()) {
-            clientReady = true;
-            System.out.println("PERFOMANT_BOOM_E2E_SERVER_CLIENT_READY");
-        }
-    }
-
-    private static void reset(MinecraftServer server) {
-        activeServer = server;
-        phase = Phase.PREPARE;
-        tickStartNanos = 0L;
-        phaseTicks = 0;
-        pairIndex = 0;
-        teleported = false;
-        clientReady = false;
-        clearSamples();
-    }
-
-    private static void clearSamples() {
-        baselineTicks.clear();
-        noDropsVanillaMs.clear();
-        noDropsVanillaTickMs.clear();
-        noDropsFastCpuMs.clear();
-        noDropsFastWallMs.clear();
-        noDropsFastMaxSliceMs.clear();
-        noDropsFastMaxServerTickMs.clear();
-        noDropsFastObservedTickTotalMs.clear();
-        noDropsFastObservedTickCount.clear();
-        noDropsVanillaBlocks.clear();
-        noDropsFastBlocks.clear();
-        noDropsRaySamples.clear();
-        defaultVanillaMs.clear();
-        defaultVanillaTickMs.clear();
-        defaultFastCpuMs.clear();
-        defaultFastWallMs.clear();
-        defaultFastMaxSliceMs.clear();
-        defaultFastMaxServerTickMs.clear();
-        defaultFastObservedTickTotalMs.clear();
-        defaultFastObservedTickCount.clear();
-        defaultVanillaBlocks.clear();
-        defaultFastBlocks.clear();
-        defaultRaySamples.clear();
-        defaultVanillaDropCounts.clear();
-    }
-
-    private static void prepare(ServerLevel level) {
-        if (NO_DROPS_VANILLA.length != TOTAL_PAIRS
-            || NO_DROPS_FAST.length != TOTAL_PAIRS
-            || DEFAULT_VANILLA.length != TOTAL_PAIRS
-            || DEFAULT_FAST.length != TOTAL_PAIRS) {
-            fail("fixture row length mismatch expected=" + TOTAL_PAIRS
-                + " actual=" + NO_DROPS_VANILLA.length + "," + NO_DROPS_FAST.length
-                + "," + DEFAULT_VANILLA.length + "," + DEFAULT_FAST.length);
-            return;
-        }
-        originalDoBlockDrops = level.getGameRules().getBoolean(GameRules.RULE_DOBLOCKDROPS);
-        for (BlockPos center : ALL_FIXTURES) fillFixture(level, center);
-        level.setBlock(CLIENT_DONE_MARKER, Blocks.REDSTONE_BLOCK.defaultBlockState(), 3);
-        System.out.println(FIXTURE_READY_MARKER
-            + " power=" + POWER
-            + " radius=" + FIXTURE_RADIUS
-            + " fixtures=" + ALL_FIXTURES.length
-            + " warmupPairs=" + WARMUP_PAIRS
-            + " measuredTrials=" + MEASURED_TRIALS
-            + " runtimePairs=" + TOTAL_PAIRS
-            + " codeSource=" + String.valueOf(BoomServerIntegrationTest.class.getProtectionDomain().getCodeSource()));
-        phase = Phase.WAIT_FOR_CLIENT;
-    }
-
-    private static void waitForClient(MinecraftServer server) {
-        if (server.getPlayerList().getPlayers().isEmpty()) return;
-        if (!teleported) {
-            for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-                player.setGameMode(net.minecraft.world.level.GameType.SPECTATOR);
-                player.teleportTo(
-                    server.overworld(),
-                    CLIENT_POSITION.getX() + 0.5D,
-                    CLIENT_POSITION.getY(),
-                    CLIENT_POSITION.getZ() + 0.5D,
-                    180.0F,
-                    25.0F
-                );
-            }
-            teleported = true;
-        }
-        if (clientReady) {
-            phase = Phase.SETTLE_CLIENT;
-            phaseTicks = 0;
-        }
-    }
-
-    private static void settleClient() {
-        if (++phaseTicks < 20) return;
-        phase = Phase.COLLECT_BASELINE;
-        phaseTicks = 0;
-    }
-
-    private static void collectBaseline(double currentTickMs) {
-        baselineTicks.add(currentTickMs);
-        if (++phaseTicks < BASELINE_TICKS) return;
-        pairIndex = 0;
-        phase = Phase.RUN_NO_DROPS_VANILLA;
-    }
-
-    private static void runVanilla(
-        ServerLevel level, BlockPos center, boolean blockDrops, double tickMsBeforeExplosion
-    ) {
-        setBlockDrops(level, blockDrops);
-        long start = System.nanoTime();
-        level.explode(
-            null,
-            center.getX() + 0.5D,
-            center.getY() + 0.5D,
-            center.getZ() + 0.5D,
-            POWER,
-            false,
-            Level.ExplosionInteraction.BLOCK
-        );
-        currentVanillaMs = (System.nanoTime() - start) / 1_000_000.0D;
-        currentVanillaTickMs = tickMsBeforeExplosion + currentVanillaMs;
-        currentVanillaBlocks = destroyedCount(level, center);
-        phase = Phase.WAIT_AFTER_NO_DROPS_VANILLA;
-        phaseTicks = 0;
-    }
-
-    private static void waitThenRunFast(ServerLevel level, BlockPos center, Phase waitPhase) {
-        if (++phaseTicks < PAIR_SETTLE_TICKS) return;
-        resetFastObservation();
-        ExplosionScheduler.scheduleTracked(
-            level, centerVec(center), POWER, metrics -> currentFastMetrics = metrics);
-        phase = waitPhase;
-        phaseTicks = 0;
-    }
-
-    private static void awaitFast(Phase settlePhase) {
-        if (currentFastMetrics == null) {
-            if (++phaseTicks > 1200) fail("fast explosion timed out in " + phase);
-            return;
-        }
-        phase = settlePhase;
-        phaseTicks = 0;
-    }
-
-    private static void settleNoDrops(ServerLevel level) {
-        if (++phaseTicks < FAST_POST_SETTLE_TICKS) return;
-
-        int fastBlocks = destroyedCount(level, NO_DROPS_FAST[pairIndex]);
-        if (!similarCounts(currentVanillaBlocks, fastBlocks)) {
-            fail("no-drops crater count diverged pair=" + pairIndex
-                + " vanilla=" + currentVanillaBlocks + " fast=" + fastBlocks);
-            return;
-        }
-
-        if (isMeasuredPair()) {
-            noDropsVanillaMs.add(currentVanillaMs);
-            noDropsVanillaTickMs.add(currentVanillaTickMs);
-            noDropsFastCpuMs.add(currentFastMetrics.cpuMs());
-            noDropsFastWallMs.add(currentFastMetrics.wallMs());
-            noDropsFastMaxSliceMs.add(currentFastMetrics.maxSliceMs());
-            noDropsFastMaxServerTickMs.add(currentFastMaxTickMs);
-            noDropsFastObservedTickTotalMs.add(currentFastTickTotalMs);
-            noDropsFastObservedTickCount.add(currentFastTickCount);
-            noDropsVanillaBlocks.add(currentVanillaBlocks);
-            noDropsFastBlocks.add(fastBlocks);
-            noDropsRaySamples.add(currentFastMetrics.raySamples());
-        }
-
-        pairIndex++;
-        if (pairIndex < NO_DROPS_VANILLA.length) {
-            phase = Phase.RUN_NO_DROPS_VANILLA;
-        } else {
-            pairIndex = 0;
-            phase = Phase.RUN_DEFAULT_VANILLA;
-        }
-        phaseTicks = 0;
-    }
-
-    private static void runDefaultVanilla(ServerLevel level, double currentTickMs) {
-        BlockPos center = DEFAULT_VANILLA[pairIndex];
-        setBlockDrops(level, true);
-        long start = System.nanoTime();
-        level.explode(
-            null,
-            center.getX() + 0.5D,
-            center.getY() + 0.5D,
-            center.getZ() + 0.5D,
-            POWER,
-            false,
-            Level.ExplosionInteraction.BLOCK
-        );
-        currentVanillaMs = (System.nanoTime() - start) / 1_000_000.0D;
-        currentVanillaTickMs = currentTickMs + currentVanillaMs;
-        currentVanillaBlocks = destroyedCount(level, center);
-
-        int dropCount = level.getEntitiesOfClass(
-            ItemEntity.class,
-            new AABB(center).inflate(FIXTURE_RADIUS + 4.0D)
-        ).size();
-        if (isMeasuredPair()) defaultVanillaDropCounts.add(dropCount);
-
-        phase = Phase.WAIT_AFTER_DEFAULT_VANILLA;
-        phaseTicks = 0;
-    }
-
-    private static void waitThenRunDefaultFast(ServerLevel level) {
-        if (++phaseTicks < PAIR_SETTLE_TICKS) return;
-
-        BlockPos vanillaCenter = DEFAULT_VANILLA[pairIndex];
-        level.getEntitiesOfClass(
-            ItemEntity.class,
-            new AABB(vanillaCenter).inflate(FIXTURE_RADIUS + 6.0D)
-        ).forEach(ItemEntity::discard);
-
-        resetFastObservation();
-        ExplosionScheduler.scheduleTracked(
-            level,
-            centerVec(DEFAULT_FAST[pairIndex]),
-            POWER,
-            metrics -> currentFastMetrics = metrics
-        );
-        phase = Phase.WAIT_DEFAULT_FAST;
-        phaseTicks = 0;
-    }
-
-    private static void settleDefault(ServerLevel level) {
-        if (++phaseTicks < FAST_POST_SETTLE_TICKS) return;
-
-        int fastBlocks = destroyedCount(level, DEFAULT_FAST[pairIndex]);
-        if (!similarCounts(currentVanillaBlocks, fastBlocks)) {
-            fail("default crater count diverged pair=" + pairIndex
-                + " vanilla=" + currentVanillaBlocks + " fast=" + fastBlocks);
-            return;
-        }
-
-        if (isMeasuredPair()) {
-            defaultVanillaMs.add(currentVanillaMs);
-            defaultVanillaTickMs.add(currentVanillaTickMs);
-            defaultFastCpuMs.add(currentFastMetrics.cpuMs());
-            defaultFastWallMs.add(currentFastMetrics.wallMs());
-            defaultFastMaxSliceMs.add(currentFastMetrics.maxSliceMs());
-            defaultFastMaxServerTickMs.add(currentFastMaxTickMs);
-            defaultFastObservedTickTotalMs.add(currentFastTickTotalMs);
-            defaultFastObservedTickCount.add(currentFastTickCount);
-            defaultVanillaBlocks.add(currentVanillaBlocks);
-            defaultFastBlocks.add(fastBlocks);
-            defaultRaySamples.add(currentFastMetrics.raySamples());
-        }
-
-        pairIndex++;
-        if (pairIndex < DEFAULT_VANILLA.length) {
-            phase = Phase.RUN_DEFAULT_VANILLA;
-            phaseTicks = 0;
-            return;
-        }
-
-        setBlockDrops(level, originalDoBlockDrops);
-        level.setBlock(CLIENT_DONE_MARKER, Blocks.EMERALD_BLOCK.defaultBlockState(), 3);
-        reportSuccess();
-        phase = Phase.DONE;
-    }
-
-    private static void resetFastObservation() {
-        currentFastMetrics = null;
-        currentFastTickTotalMs = 0.0D;
-        currentFastMaxTickMs = 0.0D;
-        currentFastTickCount = 0;
-    }
-
-    private static boolean isMeasuredPair() {
-        return pairIndex >= WARMUP_PAIRS;
-    }
-
-    private static void reportSuccess() {
-        Stats baseline = stats(baselineTicks);
-        Stats ndVanilla = stats(noDropsVanillaMs);
-        Stats ndVanillaTick = stats(noDropsVanillaTickMs);
-        Stats ndFastCpu = stats(noDropsFastCpuMs);
-        Stats ndFastWall = stats(noDropsFastWallMs);
-        Stats ndFastSlice = stats(noDropsFastMaxSliceMs);
-        Stats ndFastTick = stats(noDropsFastMaxServerTickMs);
-        Stats defVanilla = stats(defaultVanillaMs);
-        Stats defVanillaTick = stats(defaultVanillaTickMs);
-        Stats defFastCpu = stats(defaultFastCpuMs);
-        Stats defFastWall = stats(defaultFastWallMs);
-        Stats defFastSlice = stats(defaultFastMaxSliceMs);
-        Stats defFastTick = stats(defaultFastMaxServerTickMs);
-
-        System.out.println(SERVER_PASS_MARKER
-            + " samples=" + MEASURED_TRIALS
-            + " baselineTickMedianMs=" + fmt(baseline.median())
-            + " noDropsVanillaMedianMs=" + fmt(ndVanilla.median())
-            + " noDropsVanillaP25Ms=" + fmt(ndVanilla.p25())
-            + " noDropsVanillaP75Ms=" + fmt(ndVanilla.p75())
-            + " noDropsFastCpuMedianMs=" + fmt(ndFastCpu.median())
-            + " noDropsFastCpuP25Ms=" + fmt(ndFastCpu.p25())
-            + " noDropsFastCpuP75Ms=" + fmt(ndFastCpu.p75())
-            + " noDropsCpuSpeedup=" + fmt(ndVanilla.median() / ndFastCpu.median())
-            + " noDropsVanillaTickMedianMs=" + fmt(ndVanillaTick.median())
-            + " noDropsFastMaxServerTickMedianMs=" + fmt(ndFastTick.median())
-            + " noDropsFastWorstServerTickMs=" + fmt(max(noDropsFastMaxServerTickMs))
-            + " noDropsLatencyImprovement=" + fmt(ndVanillaTick.median() / ndFastTick.median())
-            + " noDropsFastWallMedianMs=" + fmt(ndFastWall.median())
-            + " noDropsFastMaxSliceMedianMs=" + fmt(ndFastSlice.median())
-            + " noDropsFastObservedTickTotalMedianMs=" + fmt(stats(noDropsFastObservedTickTotalMs).median())
-            + " noDropsFastObservedTickCountMedian=" + medianInt(noDropsFastObservedTickCount)
-            + " noDropsVanillaBlocksMedian=" + medianInt(noDropsVanillaBlocks)
-            + " noDropsFastBlocksMedian=" + medianInt(noDropsFastBlocks)
-            + " noDropsRaySamplesMedian=" + medianLong(noDropsRaySamples)
-            + " defaultVanillaMedianMs=" + fmt(defVanilla.median())
-            + " defaultVanillaP25Ms=" + fmt(defVanilla.p25())
-            + " defaultVanillaP75Ms=" + fmt(defVanilla.p75())
-            + " defaultFastCpuMedianMs=" + fmt(defFastCpu.median())
-            + " defaultFastCpuP25Ms=" + fmt(defFastCpu.p25())
-            + " defaultFastCpuP75Ms=" + fmt(defFastCpu.p75())
-            + " defaultCpuSpeedup=" + fmt(defVanilla.median() / defFastCpu.median())
-            + " defaultVanillaTickMedianMs=" + fmt(defVanillaTick.median())
-            + " defaultFastMaxServerTickMedianMs=" + fmt(defFastTick.median())
-            + " defaultFastWorstServerTickMs=" + fmt(max(defaultFastMaxServerTickMs))
-            + " defaultLatencyImprovement=" + fmt(defVanillaTick.median() / defFastTick.median())
-            + " defaultFastWallMedianMs=" + fmt(defFastWall.median())
-            + " defaultFastMaxSliceMedianMs=" + fmt(defFastSlice.median())
-            + " defaultFastObservedTickTotalMedianMs=" + fmt(stats(defaultFastObservedTickTotalMs).median())
-            + " defaultFastObservedTickCountMedian=" + medianInt(defaultFastObservedTickCount)
-            + " defaultVanillaBlocksMedian=" + medianInt(defaultVanillaBlocks)
-            + " defaultFastBlocksMedian=" + medianInt(defaultFastBlocks)
-            + " defaultRaySamplesMedian=" + medianLong(defaultRaySamples)
-            + " defaultVanillaDropsMedian=" + medianInt(defaultVanillaDropCounts));
-    }
-
-    private static void setBlockDrops(ServerLevel level, boolean enabled) {
-        level.getGameRules().getRule(GameRules.RULE_DOBLOCKDROPS).set(enabled, level.getServer());
-    }
-
-    private static void fillFixture(ServerLevel level, BlockPos center) {
-        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-        for (int x = -SHELL_RADIUS; x <= SHELL_RADIUS; x++) {
-            for (int y = -SHELL_RADIUS; y <= SHELL_RADIUS; y++) {
-                for (int z = -SHELL_RADIUS; z <= SHELL_RADIUS; z++) {
-                    pos.set(center.getX() + x, center.getY() + y, center.getZ() + z);
-                    boolean shell =
-                        Math.max(Math.max(Math.abs(x), Math.abs(y)), Math.abs(z)) == SHELL_RADIUS;
-                    level.setBlock(
-                        pos,
-                        shell ? Blocks.BEDROCK.defaultBlockState() : Blocks.NETHERRACK.defaultBlockState(),
-                        2
-                    );
+                case PREPARE -> {
+                    originalDrops=level.getGameRules().getBoolean(GameRules.RULE_DOBLOCKDROPS);
+                    if ("1".equals(System.getenv("PERFOMANT_BOOM_RELOAD"))) {
+                        for (Trial trial:TRIALS) {
+                            int r=trial.radius();
+                            for (int x=(trial.x()-r)>>4;x<=((trial.x()+r)>>4);x++)
+                                for (int z=(trial.z()-r)>>4;z<=((trial.z()+r)>>4);z++) level.getChunk(x,z);
+                        }
+                        phase=Phase.PERSIST; ticks=0;
+                        break;
+                    }
+                    for (Trial trial:TRIALS) fill(level,trial);
+                    BoomStateDigest.write("fixtures.json",TRIALS);
+                    System.out.println("PERFOMANT_BOOM_E2E_FIXTURE_READY fixtures="+TRIALS.size()+" warmupPairs="+WARMUPS+" measuredTrials="+MEASURED+" stressPairs=1");
+                    phase=Phase.JOIN; ticks=0;
                 }
-            }
-        }
-        level.setBlock(center, Blocks.GLOWSTONE.defaultBlockState(), 2);
-    }
-
-    private static int destroyedCount(ServerLevel level, BlockPos center) {
-        int result = 0;
-        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-        for (int x = -FIXTURE_RADIUS; x <= FIXTURE_RADIUS; x++) {
-            for (int y = -FIXTURE_RADIUS; y <= FIXTURE_RADIUS; y++) {
-                for (int z = -FIXTURE_RADIUS; z <= FIXTURE_RADIUS; z++) {
-                    pos.set(center.getX() + x, center.getY() + y, center.getZ() + z);
-                    if (level.getBlockState(pos).isAir()) result++;
+                case JOIN -> {
+                    if (observer==null && !server.getPlayerList().getPlayers().isEmpty()) {
+                        observer=server.getPlayerList().getPlayers().get(0);
+                        observer.setGameMode(net.minecraft.world.level.GameType.SPECTATOR);
+                        observer.teleportTo(level,32.5,130,0.5,180,25);
+                    }
+                    if (ready) { phase=Phase.BASELINE; ticks=0; }
+                    else if (ticks>2400) throw new IllegalStateException("Real client did not become ready");
                 }
+                case BASELINE -> { if (ticks>=100) begin(); }
+                case BEGIN -> {
+                    // Two coordination commands per trial cost 40 spam-counter units.
+                    // Pace outside measurement instead of granting the observer operator powers.
+                    if (begun && ticks>=40) { phase=Phase.RUN; ticks=0; }
+                    else if (ticks>1200) throw new IllegalStateException("Client begin acknowledgement timed out sample="+next);
+                }
+                case RUN -> {
+                    Trial t=TRIALS.get(next);
+                    drops(level,!t.scenario().contains("no-drops"));
+                    // Test-only isolated worlds; identical ray RNG sequence for BOTH implementations.
+                    level.getRandom().setSeed(t.seed());
+                    metrics=null; tickMs.clear();
+                    explosionStart=System.nanoTime();
+                    if (t.fast()) {
+                        ExplosionScheduler.scheduleTracked(level,Vec3.atCenterOf(t.center()),t.power(),m -> metrics=m);
+                        inlineWork=(System.nanoTime()-explosionStart)/1_000_000.0;
+                        phase=Phase.ENGINE;
+                    } else {
+                        level.explode(null,t.x()+0.5,t.y()+0.5,t.z()+0.5,t.power(),false,Level.ExplosionInteraction.BLOCK);
+                        activeWorkMs=(System.nanoTime()-explosionStart)/1_000_000.0;
+                        inlineWork=activeWorkMs; scheduleWallMs=activeWorkMs; phase=Phase.SETTLE;
+                    }
+                    ticks=0;
+                }
+                case ENGINE -> {
+                    if (metrics!=null) { activeWorkMs=metrics.workMs(); scheduleWallMs=metrics.wallMs(); phase=Phase.SETTLE; ticks=0; }
+                    else if (ticks>2400) throw new IllegalStateException("Scheduler did not complete sample="+next);
+                }
+                case SETTLE -> {
+                    if (ticks>=10 && !level.getLightEngine().hasLightWork()) publishExpected(level);
+                    else if (ticks>1200) throw new IllegalStateException("Deferred light work did not settle");
+                }
+                case ACK -> { if (ticks>1200) throw new IllegalStateException("Client state did not match authoritative snapshot sample="+next); }
+                case SHUTDOWN -> {
+                    if (clientDone && ++shutdownTicks>=20) {
+                        System.out.println("PERFOMANT_BOOM_E2E_SERVER_PASS samples="+samples.size()+" exactClientAcks="+samples.size()+" exactPairedCraters="+paired.size());
+                        stopServer(server);
+                    } else if (ticks>600) throw new IllegalStateException("Missing final client receipt");
+                }
+                case PERSIST -> {
+                    if (ticks>=100 && !level.getLightEngine().hasLightWork()) {
+                        for (Trial t:TRIALS) {
+                            var path=BoomStateDigest.evidence().resolve(String.format(Locale.ROOT,"expected-%02d.json",t.index()));
+                            var saved=BoomStateDigest.JSON.fromJson(java.nio.file.Files.readString(path),Expected.class);
+                            var actual=BoomStateDigest.snapshot(level,t.center(),t.radius());
+                            if (!actual.equals(saved.expected())) throw new IllegalStateException("Save/reload drift sample="+t.index()+" saved="+saved.expected()+" actual="+actual);
+                        }
+                        BoomStateDigest.write("persistence.json",Map.of("exactFixtures",TRIALS.size(),"token",BoomStateDigest.token()));
+                        System.out.println("PERFOMANT_BOOM_E2E_PERSISTENCE_PASS exactFixtures="+TRIALS.size());
+                        stopServer(server);
+                    } else if (ticks>1200) throw new IllegalStateException("Reload lighting did not settle");
+                }
+                case FAILED -> stopServer(server);
+            }
+        } catch (Throwable e) {
+            phase=Phase.FAILED;
+            System.err.println("PERFOMANT_BOOM_E2E_SERVER_FAIL "+e);
+            e.printStackTrace();
+        } finally {
+            if (measure) tickMs.add(observed+inlineWork);
+        }
+    }
+    private static void stopServer(MinecraftServer server) {
+        if (stopping) return;
+        stopping=true;
+        int exitCode=phase==Phase.FAILED ? 1 : 0;
+        Thread serverThread=Thread.currentThread();
+        server.halt(false);
+        // Architectury's development file watcher keeps a JVM alive after Minecraft
+        // exits. Wait for the ENTIRE server thread (including finally/save/close),
+        // then exit normally. Never substitute this for completion or saved-state checks.
+        Thread exit=new Thread(() -> {
+            try {
+                serverThread.join(120_000);
+                if (serverThread.isAlive()) {
+                    System.err.println("PERFOMANT_BOOM_E2E_SERVER_FAIL server thread did not stop");
+                    System.exit(1);
+                }
+                System.out.println("PERFOMANT_BOOM_E2E_SERVER_CLEAN_SHUTDOWN");
+                System.exit(exitCode);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt(); System.exit(1);
+            }
+        },"boom-test-clean-exit");
+        exit.setDaemon(true); exit.start();
+    }
+
+    private static void begin() {
+        begun=false; ticks=0; phase=Phase.BEGIN;
+        BoomStateDigest.write("begin.json",TRIALS.get(next));
+    }
+    private static void publishExpected(ServerLevel level) {
+        Trial t=TRIALS.get(next);
+        BoomStateDigest.requireShell(level,t.center(),t.radius());
+        var snapshot=BoomStateDigest.snapshot(level,t.center(),t.radius());
+        if (snapshot.air()==0 || snapshot.maxBlockLight()!=0 || snapshot.blockEntities()!=0)
+            throw new IllegalStateException("Fixture did not converge sample="+next+" "+snapshot);
+        String key=t.scenario()+":"+t.pair();
+        var other=paired.putIfAbsent(key,snapshot);
+        if (other!=null && !other.blocks().equals(snapshot.blocks()))
+            throw new IllegalStateException("Exact seeded vanilla/fast crater mismatch "+key+" expected="+other+" actual="+snapshot);
+        expected=new Expected(BoomStateDigest.token(),t,snapshot);
+        BoomStateDigest.write(String.format(Locale.ROOT,"expected-%02d.json",next),expected);
+        phase=Phase.ACK; ticks=0;
+    }
+    private static void acknowledge(int index,String token,String blocks,String light) {
+        if (phase!=Phase.ACK || index!=next || expected==null) return;
+        if (!Objects.equals(token,BoomStateDigest.token()) || !expected.expected().blocks().equals(blocks) || !expected.expected().light().equals(light))
+            throw new IllegalArgumentException("Wrong client state receipt");
+        Trial t=TRIALS.get(next);
+        Map<String,Object> sample=new LinkedHashMap<>();
+        sample.put("trial",t); sample.put("authoritative",expected.expected());
+        sample.put("activeWorkMs",activeWorkMs); sample.put("schedulerCompletionWallMs",scheduleWallMs);
+        sample.put("clientAcknowledgedWallMs",(System.nanoTime()-explosionStart)/1_000_000.0);
+        sample.put("observedServerTickMs",List.copyOf(tickMs));
+        sample.put("maxObservedServerTickMs",tickMs.stream().mapToDouble(Double::doubleValue).max().orElse(0));
+        if (metrics!=null) sample.put("scheduler",metrics);
+        samples.add(sample);
+        BoomStateDigest.write(String.format(Locale.ROOT,"server-sample-%02d.json",next),sample);
+        System.out.println("PERFOMANT_BOOM_E2E_SAMPLE index="+next+" fast="+t.fast()+" scenario="+t.scenario()+" air="+expected.expected().air());
+        ServerLevel level=activeServer.overworld();
+        level.getEntitiesOfClass(ItemEntity.class,new AABB(t.center()).inflate(t.radius()+4)).forEach(ItemEntity::discard);
+        next++;
+        if (next==TRIALS.size()) {
+            drops(level,originalDrops);
+            BoomStateDigest.write("server-samples.json",samples);
+            BoomStateDigest.write("complete.json",Map.of("samples",samples.size(),"token",BoomStateDigest.token()));
+            phase=Phase.SHUTDOWN; ticks=0; shutdownTicks=0;
+        } else begin();
+    }
+    private static void drops(ServerLevel level,boolean value) { level.getGameRules().getRule(GameRules.RULE_DOBLOCKDROPS).set(value,level.getServer()); }
+    private static void fill(ServerLevel level,Trial t) {
+        var p=new BlockPos.MutableBlockPos(); int r=t.radius();
+        for (int x=-r;x<=r;x++) for (int y=-r;y<=r;y++) for (int z=-r;z<=r;z++) {
+            p.set(t.x()+x,t.y()+y,t.z()+z);
+            boolean shell=Math.max(Math.max(Math.abs(x),Math.abs(y)),Math.abs(z))==r;
+            level.setBlock(p,shell?Blocks.BEDROCK.defaultBlockState():Blocks.NETHERRACK.defaultBlockState(),2);
+        }
+        level.setBlock(t.center(),Blocks.GLOWSTONE.defaultBlockState(),2);
+    }
+    private static List<Trial> trials() {
+        List<Trial> result=new ArrayList<>();
+        for (int scenario=0;scenario<2;scenario++) for (int pair=0;pair<WARMUPS+MEASURED;pair++) {
+            for (int order=0;order<2;order++) {
+                boolean fast=(order==(pair%2==0?1:0));
+                result.add(new Trial(result.size(),scenario==0?"no-drops":"default-loot",pair,pair<WARMUPS,fast,
+                    -80+pair*32,96,-48+(scenario*2+(fast?1:0))*32,13,10,0xB00B5EEDL+pair));
             }
         }
-        return result;
-    }
-
-    private static boolean similarCounts(int vanilla, int fast) {
-        int tolerance = Math.max(32, (int)Math.ceil(vanilla * 0.20D));
-        return Math.abs(vanilla - fast) <= tolerance;
-    }
-
-    private static Vec3 centerVec(BlockPos pos) {
-        return new Vec3(pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D);
-    }
-
-    private static BlockPos[] fixtureRow(int row) {
-        BlockPos[] result = new BlockPos[TOTAL_PAIRS];
-        int startX = -80;
-        int spacing = 32;
-        int z = -48 + row * spacing;
-        for (int i = 0; i < TOTAL_PAIRS; i++) {
-            result[i] = new BlockPos(startX + i * spacing, 96, z);
-        }
-        return result;
-    }
-
-    private static BlockPos[] concatFixtures() {
-        BlockPos[] result = new BlockPos[TOTAL_PAIRS * 4];
-        int offset = 0;
-        for (BlockPos[] row : List.of(NO_DROPS_VANILLA, NO_DROPS_FAST, DEFAULT_VANILLA, DEFAULT_FAST)) {
-            System.arraycopy(row, 0, result, offset, row.length);
-            offset += row.length;
-        }
-        return result;
-    }
-
-    private static Stats stats(List<Double> values) {
-        if (values.isEmpty()) return new Stats(Double.NaN, Double.NaN, Double.NaN);
-        double[] sorted = values.stream().mapToDouble(Double::doubleValue).sorted().toArray();
-        int last = sorted.length - 1;
-        return new Stats(
-            sorted[last / 2],
-            sorted[(int)Math.floor(last * 0.25D)],
-            sorted[(int)Math.ceil(last * 0.75D)]
-        );
-    }
-
-    private static double max(List<Double> values) {
-        return values.stream().mapToDouble(Double::doubleValue).max().orElse(Double.NaN);
-    }
-
-    private static int medianInt(List<Integer> values) {
-        int[] sorted = values.stream().mapToInt(Integer::intValue).sorted().toArray();
-        return sorted[sorted.length / 2];
-    }
-
-    private static long medianLong(List<Long> values) {
-        long[] sorted = values.stream().mapToLong(Long::longValue).sorted().toArray();
-        return sorted[sorted.length / 2];
-    }
-
-    private static String fmt(double value) {
-        return String.format(Locale.ROOT, "%.3f", value);
-    }
-
-    private static void fail(String reason) {
-        if (phase == Phase.FAILED) return;
-        phase = Phase.FAILED;
-        System.err.println(SERVER_FAIL_MARKER + " " + reason);
-    }
-
-    private record Stats(double median, double p25, double p75) {}
-
-    private enum Phase {
-        PREPARE,
-        WAIT_FOR_CLIENT,
-        SETTLE_CLIENT,
-        COLLECT_BASELINE,
-        RUN_NO_DROPS_VANILLA,
-        WAIT_AFTER_NO_DROPS_VANILLA,
-        WAIT_NO_DROPS_FAST,
-        SETTLE_NO_DROPS_FAST,
-        RUN_DEFAULT_VANILLA,
-        WAIT_AFTER_DEFAULT_VANILLA,
-        WAIT_DEFAULT_FAST,
-        SETTLE_DEFAULT_FAST,
-        DONE,
-        FAILED
+        for (boolean fast:new boolean[]{true,false}) result.add(new Trial(result.size(),"stress-no-drops",0,false,fast,
+            fast?0:64,176,0,29,24,0x57E55L));
+        return List.copyOf(result);
     }
 }

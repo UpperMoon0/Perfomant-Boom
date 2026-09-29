@@ -1,0 +1,80 @@
+// Pinned to Architectury Loom 1.11.458 / Gradle 8.14. Export fully prepared launch
+// commands instead of starting either JVM from Gradle. Both sides compile first;
+// no Gradle process can rebuild/redefine the common JAR during a measured run.
+import groovy.json.JsonOutput
+import org.gradle.api.tasks.JavaExec
+import org.gradle.api.tasks.StopExecutionException
+
+gradle.projectsEvaluated {
+    allprojects { project ->
+        project.tasks.withType(JavaExec).configureEach { task ->
+            if (!(task.name in ['runLiveBoomTestServer','runLiveBoomTestClient'])) return
+            task.doFirst {
+                def protectedValue = { String methodName ->
+                    Class type = task.getClass()
+                    while (type != null) {
+                        try {
+                            def method = type.getDeclaredMethod(methodName)
+                            method.setAccessible(true)
+                            def value=method.invoke(task)
+                            return value instanceof org.gradle.api.file.FileCollection ? value : value.get()
+                        } catch (NoSuchMethodException ignored) { type = type.getSuperclass() }
+                    }
+                    throw new GradleException("Unsupported Loom task: missing ${methodName}")
+                }
+                def side = task.name.endsWith('Server') ? 'server' : 'client'
+                def directory = new File(System.getenv('PERFOMANT_BOOM_EVIDENCE'))
+                def jvm = (task.allJvmArgs + task.jvmArguments.getOrElse([]) +
+                    task.jvmArgumentProviders.collectMany { it.asArguments().toList() }).unique()
+                // Architectury uses writable per-project metadata. Copy it for each side
+                // while its task is configured, so client preparation cannot alter server launch.
+                def metadata = new File(directory, "frozen-launch/${side}")
+                metadata.mkdirs()
+                // The transformer assumes forward-slash names when inspecting classpath
+                // directories, which breaks on Windows. Frozen ZIP entries are portable,
+                // and also prevent the classpath argument file changing between launches.
+                def classpath = protectedValue('getInternalClasspath').files.collect { File input ->
+                    if (!input.isDirectory()) return input.absolutePath
+                    def output = new File(metadata, "classes-${Integer.toHexString(input.absolutePath.hashCode())}.jar")
+                    output.withOutputStream { stream ->
+                        def zip = new java.util.zip.ZipOutputStream(stream)
+                        try {
+                            project.fileTree(input).files.sort().each { File entry ->
+                                def name=input.toPath().relativize(entry.toPath()).toString().replace(File.separatorChar, '/' as char)
+                                def ze=new java.util.zip.ZipEntry(name); ze.time=0L
+                                zip.putNextEntry(ze); zip.write(entry.bytes); zip.closeEntry()
+                            }
+                        } finally { zip.close() }
+                    }
+                    return output.absolutePath
+                }
+                def classpathArgs = new File(metadata, 'classpath.args')
+                def quotedClasspath = classpath.join(File.pathSeparator).replace('\\', '\\\\').replace('"', '\\"')
+                classpathArgs.text = '-classpath\n"' + quotedClasspath + '"\n'
+                jvm = jvm.collect { arg ->
+                    if (arg.startsWith('@')) return '@' + classpathArgs.absolutePath
+                    if (arg.startsWith('-Darchitectury.') && arg.contains('=')) {
+                        int equals = arg.indexOf('=')
+                        def input = new File(arg.substring(equals+1))
+                        if (input.isFile()) {
+                            def output = new File(metadata, input.name)
+                            output.bytes = input.bytes
+                            return arg.substring(0,equals+1) + output.absolutePath
+                        }
+                    }
+                    return arg
+                }
+                def app = (task.args ?: []) + task.argumentProviders.collectMany { it.asArguments().toList() }
+                def cwd = new File(project.projectDir, protectedValue('getInternalRunDir').toString())
+                cwd.mkdirs()
+                def java = task.executable ?: task.javaLauncher.get().executablePath.asFile.absolutePath
+                def spec = [command: [java] + jvm + [task.mainClass.get()] + app,
+                            cwd: cwd.absolutePath, environment: protectedValue('getInternalEnvironmentVars')]
+                directory.mkdirs()
+                new File(directory,"${side}-launch.json").text = JsonOutput.prettyPrint(JsonOutput.toJson(spec))
+                println "Exported frozen ${side} launch to ${directory}"
+                throw new StopExecutionException('Launch exported; harness owns the fresh JVMs')
+            }
+        }
+    }
+}

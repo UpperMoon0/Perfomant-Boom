@@ -1,54 +1,42 @@
-# Verification
+# Testing Perfomant Boom
 
-## Current committed test lanes
+## Required CI and release gates
 
-`Validate` runs on pull requests, pushes to main, and manual dispatch. The release workflow calls the same `checks.yml` workflow, so publication cannot silently use a weaker build/test command.
-
-- Release-tooling regression tests use temporary Git repositories and synthetic JARs. They do not make network calls, upload files, or use publishing credentials.
-- JVM regression tests cover deterministic vanilla ray selection for non-air blocks, resistant center blocks, empty-air work, stable results across time slices, and an independent Minecraft 1.20.1 vanilla-ray comparison benchmark.
-- Forge GameTest exercises the production scheduler in a real world and checks block-entity cleanup, an unbreakable control, crater mutation and lighting settlement.
-- `test build` compiles and tests the shared implementation and builds Minecraft 1.20.1 Fabric and Forge artifacts. Packaging verifies the shared implementation is present, loader metadata contains the exact version, and precisely two runnable artifacts are selected. Sources/dev JARs are excluded.
-
-CI retains test reports and the verified release candidate with its source commit and checksums. Publishing downloads those artifacts rather than rebuilding after validation.
-
-## Local commands
-
-Use Python 3.11+ and JDK 21. On Windows use `gradlew.bat` instead of `./gradlew`.
+`validate.yml` and `release.yml` both call `checks.yml`. Every release requires release/harness tests, workflow lint, JVM regressions, Fabric and Forge builds, Forge GameTest, and BOTH real-client integration jobs. The live jobs run on disposable GitHub-hosted Ubuntu VMs with Xvfb/Mesa; untrusted fork code never uses the private fleet. No publishing credentials enter these jobs.
 
 ```sh
 python -m unittest discover -s tools -p 'test_*.py' -v
-python tools/release.py check
 ./gradlew test build -I .github/reproducible.gradle
 ./gradlew :forge:runBoomGameTestServer
-python tools/release.py package
-python tools/release.py verify
+python tools/live_boom_test.py --loader fabric --timeout 900 --require-clean
+python tools/live_boom_test.py --loader forge --timeout 900 --require-clean
 ```
 
-The focused vanilla calculation benchmark can be run with:
+Use JDK 21 and Python 3.11+; use `gradlew.bat` on Windows. Windows service launches reuse the active interactive desktop. Run one loader at a time in any one checkout. Development runs may omit `--require-clean`, but their evidence explicitly records the dirty state.
 
-```sh
-./gradlew :common:test --tests com.nstut.explosion.VanillaComparisonBenchmarkTest --rerun-tasks
-```
+## What the live gate proves
 
-`package` requires an empty `build/release` staging directory. It intentionally rejects stale runnable JARs from another version; clean that isolated build before packaging a new version.
+Both dedicated server and real graphical client are prepared completely before either starts. A pinned Loom exporter writes direct Java commands; no Gradle process can recompile or hot-reload common classes during measurement. Source/classes/development JARs are fingerprinted and monitored. A checkout lock rejects concurrent runs. Each run owns a unique world, loopback-only offline server, port and evidence directory; old runs are retained.
 
-## Dedicated-server and real-client benchmark
+The isolated test world uses three warmup pairs, five measured pairs for each of no-drops and default-loot scenarios, plus a larger power-24 stress pair. Runtime totals: 34 explosions in 17 pairs. Fixtures start as netherrack with glowstone centers and bedrock shells and cross chunk/section boundaries. The comparison calls actual `ServerLevel.explode` and the production scheduler. Seeds match within each pair and first-run order alternates. Exact relative block-state SHA-256 digests, not approximately similar counts, must match between vanilla and fast craters.
 
-The repository includes a self-driving dedicated-server + graphical-client benchmark modeled after the live verification used by the other mod projects:
+The server publishes per-trial authoritative block/light digests through an out-of-band local evidence file. The client hashes its actual network-populated `ClientLevel`; it NEVER modifies its world from the oracle. Every block state, block/sky light value, air count and block-entity count in the fixture is compared, with full bedrock-shell checks. Only after exact convergence and at least two rendered frames does the real client send a run-token/index/digest command acknowledgement. The server verifies each receipt. This is separate from vanilla-versus-fast semantic parity.
 
-```sh
-python tools/live_boom_test.py --loader fabric --timeout 360
-python tools/live_boom_test.py --loader forge --timeout 360
-```
+Coordination commands are paced outside measured work to respect vanilla spam limits without granting operator permissions. All clients/servers must exit normally with code zero, with no late fatal logs after a PASS marker. The test server joins its complete Minecraft server thread (including save/close) before a normal JVM exit, because Architectury's development file watcher otherwise remains alive. A fresh server process then loads the saved world and verifies every authoritative block/light snapshot again. Forced cleanup, source drift, absent evidence or failed save/reload means failure. A PASS log alone is insufficient.
 
-Each run uses an isolated run directory and port, waits for the real client to join, executes vanilla and Perfomant-Boom explosions in independent bedrock-contained fixtures, performs warmup pairs, then records five measured trials. The client verifies authoritative crater updates, surviving bedrock controls and block-light convergence. Evidence and parsed results are written under `build/live-boom-evidence/<loader>/`.
+## Evidence and performance interpretation
 
-Report the no-drop scenario as the closest equivalent-work comparison. The default-drop scenario is also useful for real gameplay cost, but vanilla creates loot while the fast path intentionally does not reproduce general vanilla explosion loot/callback behavior.
+Evidence is retained in `build/live-boom-evidence/<loader>/<run-id>/`: logs, frozen input hashes, launch descriptions, authoritative/client snapshots, every raw timing sample, save/reload proof and `result.json`. CI uploads failed evidence too. A stale checkout lock is deliberately not auto-stolen: verify its owner and remaining processes before removing it manually.
 
-Keep three performance concepts separate:
+Report these metrics separately:
 
-- calculation/CPU time: how much processor work the explosion implementation consumes;
-- affected-tick latency: how large the server tick becomes while explosion work is running;
-- wall-clock completion: how long until the time-sliced fast explosion has fully finished.
+- **Active work (`activeWorkMs`, scheduler `workMs`)** is monotonic elapsed time inside explosion/scheduler calls, not actual thread/process CPU time. It excludes deferred work outside those calls.
+- **Observed server-tick duration** covers the start/end hooks, including explosion work and ten aftermath ticks. Oracle hashing/file I/O after the end hook is excluded. It is not a claim that every engine tail or OS cost is included.
+- **Client-acknowledged wall time** runs from explosion invocation through light settlement, oracle exchange, client convergence, two rendered frames and the server receipt. It includes harness synchronization overhead; it is not packet latency or pure engine completion time.
+- **Observed frame gaps** use actual world-render callbacks from trial readiness through convergence. They include rendering and test-observer costs; they are not GPU fence timestamps or percentile FPS. Render callbacks do not prove every chunk mesh is uploaded.
 
-The scheduler uses a cooperative per-tick budget, not a hard real-time deadline: one chunk/light/physics operation can overrun the target. The real-client lane is committed and repeatable, but it is intentionally not part of the normal release workflow because it requires a graphical client and is substantially more expensive than the deterministic CI lanes.
+Only the no-drops scenario is an equivalent-loot comparison. Default-loot vanilla creates normal explosion loot while the fast engine omits general vanilla explosion loot/custom callbacks. That comparison must never be advertised as an equivalent-functionality speedup. Raw samples, medians and quartiles are retained; the single stress pair is a regression check, not a statistical performance claim. The four-millisecond scheduler target is cooperative and may be exceeded by one expensive operation. There is no universal multiplier.
+
+## Scope
+
+These fixtures cover seeded static vanilla blocks, chunk/section mutation, lighting, real network convergence and persistence. Forge GameTest additionally covers chest block-entity cleanup. They do not certify every modded explosion hook, entity behavior, fluid simulation, custom protection mod or arbitrary dynamic world change. Development runtime gates validate the exact source commit; release packaging separately verifies remapped artifact metadata and provenance rather than claiming the development launch used the release JAR bytes.
