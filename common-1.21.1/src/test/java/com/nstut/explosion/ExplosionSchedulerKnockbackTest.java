@@ -42,6 +42,59 @@ class ExplosionSchedulerKnockbackTest {
         checkYieldedExplosion(false, false, true);
     }
 
+    @Test void frozenAudienceStillGetsHitImpulseAfterCrossingRangeBeforeEntityTurn() {
+        var server = mock(MinecraftServer.class);
+        var level = mock(ServerLevel.class, RETURNS_DEEP_STUBS);
+        when(level.getServer()).thenReturn(server);
+        when(server.isSameThread()).thenReturn(true);
+        when(level.dimension()).thenReturn(Level.OVERWORLD);
+        when(server.getLevel(Level.OVERWORLD)).thenReturn(level);
+
+        var explosion = mock(Explosion.class);
+        when(explosion.center()).thenReturn(Vec3.ZERO);
+        when(explosion.radius()).thenReturn(40F);
+
+        var player = mock(ServerPlayer.class);
+        player.connection = mock(ServerGamePacketListenerImpl.class);
+        when(player.level()).thenReturn(level);
+        when(player.distanceToSqr(Vec3.ZERO)).thenReturn(2500D);
+        when(player.getX()).thenReturn(70D);
+        when(player.getDeltaMovement()).thenReturn(Vec3.ZERO);
+
+        var first = mock(Entity.class);
+        when(first.ignoreExplosion(explosion)).thenReturn(true);
+        when(level.players()).thenReturn(List.of(player));
+        when(level.getEntities(isNull(), any(AABB.class))).thenReturn(List.of(first, player));
+
+        var calculation = mock(FastExplosionEngine.IncrementalCalculation.class);
+        when(calculation.processUntil(anyLong())).thenReturn(true);
+        when(calculation.affectedBlocks()).thenReturn(Set.of());
+
+        try (var engine = mockStatic(FastExplosionEngine.class);
+             var adapter = mockStatic(VanillaExplosionAdapter.class, CALLS_REAL_METHODS);
+             var exposure = mockStatic(Explosion.class)) {
+            engine.when(() -> FastExplosionEngine.create(level, Vec3.ZERO, 40F)).thenReturn(calculation);
+            adapter.when(() -> VanillaExplosionAdapter.create(level, Vec3.ZERO, 40F)).thenReturn(explosion);
+            exposure.when(() -> Explosion.getSeenPercent(Vec3.ZERO, player)).thenReturn(1F);
+
+            ExplosionScheduler.scheduleTracked(level, Vec3.ZERO, 40F, null);
+
+            // Freeze the audience, process another entity, then yield before the player turn.
+            ExplosionScheduler.tickUntil(server, Long.MIN_VALUE);
+            verify(first).ignoreExplosion(explosion);
+            verifyNoInteractions(player.connection);
+
+            // The player crosses outside 64 blocks but remains inside this large explosion radius.
+            when(player.distanceToSqr(Vec3.ZERO)).thenReturn(4900D);
+            ExplosionScheduler.tickUntil(server, Long.MAX_VALUE);
+
+            verify(player).setDeltaMovement(any(Vec3.class));
+            var packets = ArgumentCaptor.forClass(ClientboundExplodePacket.class);
+            verify(player.connection).send(packets.capture());
+            assertTrue(packets.getValue().getKnockbackX() > 0F);
+            verifyNoMoreInteractions(player.connection);
+        }
+    }
     private void checkYieldedExplosion(boolean leavesRange, boolean observersMove, boolean changesDimension) {
         var server = mock(MinecraftServer.class);
         var level = mock(ServerLevel.class, RETURNS_DEEP_STUBS);

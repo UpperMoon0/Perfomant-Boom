@@ -104,10 +104,10 @@ public final class ExplosionScheduler {
                     Entity entity = entities.get(entityIndex++);
                     VanillaExplosionAdapter.hurt(level, explosion, entity, hitPlayers);
                     // Send the additive impulse in the same slice as the server velocity change.
-                    // Evaluate range now, before a yielded task lets the player move again.
+                    // The frozen audience is authoritative across yields; never retest live distance.
                     if (entity instanceof net.minecraft.server.level.ServerPlayer player) {
                         Vec3 impulse = hitPlayers.remove(player);
-                        if (impulse != null && player.distanceToSqr(center) < 4096.0) {
+                        if (impulse != null && player.level() == level && effectRecipients.contains(player)) {
                             player.connection.send(VanillaExplosionAdapter.clientPacket(center, power, impulse));
                             effectsSent.add(player);
                         }
