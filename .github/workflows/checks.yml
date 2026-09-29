@@ -1,0 +1,82 @@
+name: Shared release checks
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  tooling:
+    name: Release tooling and workflow validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test release planning and artifact safety
+        run: python -m unittest discover -s tools -p 'test_*.py' -v
+      - name: Check release metadata
+        run: python tools/release.py check
+      - name: Validate GitHub Actions workflows
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          directory="$RUNNER_TEMP/actionlint"
+          mkdir -p "$directory"
+          gh release download v1.7.12 --repo rhysd/actionlint \
+            --pattern actionlint_1.7.12_linux_amd64.tar.gz \
+            --pattern actionlint_1.7.12_checksums.txt --dir "$directory"
+          (cd "$directory"; grep '  actionlint_1.7.12_linux_amd64.tar.gz$' actionlint_1.7.12_checksums.txt | sha256sum --check --strict)
+          tar -xzf "$directory/actionlint_1.7.12_linux_amd64.tar.gz" -C "$directory"
+          "$directory/actionlint" -color
+
+  build:
+    name: JVM tests and both loader JARs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Test and build Minecraft 1.20.1 Fabric and Forge
+        shell: bash
+        run: |
+          chmod +x gradlew
+          ./gradlew test build -I .github/reproducible.gradle --stacktrace --no-daemon --max-workers=2
+      - name: Select and verify the two runnable loader artifacts
+        run: |
+          python tools/release.py package
+          python tools/release.py verify
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate
+          path: build/release/*
+          if-no-files-found: error
+      - name: Retain test and build reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-reports
+          path: |
+            **/build/reports/**
+            **/build/test-results/**
+          if-no-files-found: warn
