@@ -1,4 +1,16 @@
-# Shared terrain API
+# Explosion and terrain API reference
+
+For dependency snippets and integration examples, start with [MODMAKER.md](../MODMAKER.md). Pack authors and server operators should use [PACKMAKER.md](../PACKMAKER.md).
+
+## Scheduled explosion API
+
+`com.nstut.explosion.ExplosionScheduler` exposes `schedule(ServerLevel, Vec3, float)` and `scheduleTracked(ServerLevel, Vec3, float, Consumer<ExplosionMetrics>)` on all supported targets. Call on the server thread with finite coordinates and validated power (1–500 matches the command). Boom's loader hooks advance the queue; consumers must not add another scheduler driver.
+
+The optional completion callback runs on the server thread. Metrics expose changed blocks, ray samples, elapsed scheduler work/slice time, pass count and wall time. They do not measure CPU time or all downstream lighting/client work. Keep callbacks nonblocking and exception-safe. Discarded world tasks need not invoke completion; no public task handle or cancellation API is returned, and the queue is not serialized across restarts.
+
+These calls use Boom's explosion damage/effects and version-specific mutation policy. General vanilla loot and arbitrary modded explosion hooks are not guaranteed. The separate terrain passes below leave effects and damage to the consumer.
+
+## Shared terrain API
 
 This is the consumer contract for the `com.nstut.explosion.terrain` API introduced in Boom 1.1.0. It describes administrative no-drop operations, separate from the ordinary explosion scheduler.
 
