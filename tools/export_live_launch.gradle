@@ -24,8 +24,10 @@ gradle.projectsEvaluated {
                 }
                 def side = task.name.endsWith('Server') ? 'server' : 'client'
                 def directory = new File(System.getenv('PERFOMANT_BOOM_EVIDENCE'))
+                // Keep repeated option names: --add-opens/--add-exports are paired
+                // with distinct following values. String-level dedup corrupts Forge launches.
                 def jvm = (task.allJvmArgs + task.jvmArguments.getOrElse([]) +
-                    task.jvmArgumentProviders.collectMany { it.asArguments().toList() }).unique()
+                    task.jvmArgumentProviders.collectMany { it.asArguments().toList() })
                 // Architectury uses writable per-project metadata. Copy it for each side
                 // while its task is configured, so client preparation cannot alter server launch.
                 def metadata = new File(directory, "frozen-launch/${side}")

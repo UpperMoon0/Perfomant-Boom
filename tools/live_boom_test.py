@@ -423,6 +423,29 @@ class FrozenInputs:
                 raise RuntimeError(f'Content drift during the frozen run: {p}')
 
 
+def validate_launch(spec: dict) -> None:
+    """Reject malformed exports before starting either process (not after server startup)."""
+    args=spec.get('command')
+    if not isinstance(args,list) or not args or any(not isinstance(a,str) or not a for a in args):
+        raise ValueError('Launch command contains an absent executable or argument')
+    main='dev.architectury.transformer.TransformerRuntime'
+    if main not in args or not isinstance(spec.get('cwd'),str) or not isinstance(spec.get('environment'),dict):
+        raise ValueError('Unsupported or incomplete Loom launch description')
+    pairs={'--add-opens','--add-exports','--add-reads','--add-modules','--limit-modules',
+           '--patch-module','--module-path','-p','--upgrade-module-path','-cp','-classpath','--class-path'}
+    i=1
+    while i<args.index(main):
+        arg=args[i]
+        if arg in pairs:
+            if i+1>=args.index(main) or args[i+1].startswith('-'):
+                raise ValueError(f'JVM option is missing its value: {arg}')
+            i+=2
+        elif arg.startswith(('-', '@')):
+            i+=1
+        else:
+            raise ValueError(f'Unpaired JVM option value would be interpreted as a main class: {arg}')
+
+
 def assert_successful_exit(process, pump: OutputPump, timeout: float):
     deadline = time.monotonic() + timeout
     while process.poll() is None:
@@ -506,6 +529,8 @@ def run(loader: str, timeout: int, require_clean: bool = False) -> int:
             pump = OutputPump(prep, 'prepare', evidence / 'gradle.log')
             assert_successful_exit(prep, pump, max(900, timeout))
         specs = {side: json.loads((evidence/f'{side}-launch.json').read_text(encoding='utf-8')) for side in ('server','client')}
+        for spec in specs.values():
+            validate_launch(spec)
         launch_files = [p for p in (evidence/'frozen-launch').rglob('*') if p.is_file()]
         launch_files += list((root/loader/'.gradle/loom-cache').glob('*.cfg'))
         frozen = FrozenInputs(root, launch_files)

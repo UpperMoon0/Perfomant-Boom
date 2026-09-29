@@ -10,6 +10,20 @@ import live_boom_test as live
 
 
 class HarnessTests(unittest.TestCase):
+    def test_repeated_jvm_module_flags_remain_valid(self):
+        live.validate_launch({'command':['java','--add-opens','a/b=c','--add-opens','d/e=f',
+            'dev.architectury.transformer.TransformerRuntime'],'cwd':'run','environment':{}})
+
+    def test_deduplicated_jvm_flags_are_rejected_before_launch(self):
+        with self.assertRaises(ValueError):
+            live.validate_launch({'command':['java','--add-opens','a/b=c','d/e=f',
+                'dev.architectury.transformer.TransformerRuntime'],'cwd':'run','environment':{}})
+
+    def test_missing_java_executable_is_rejected(self):
+        with self.assertRaises(ValueError):
+            live.validate_launch({'command':[None,'dev.architectury.transformer.TransformerRuntime'],
+                'cwd':'run','environment':{}})
+
     def test_free_port_is_local_and_valid(self):
         self.assertGreater(live.find_free_port(), 0)
 
