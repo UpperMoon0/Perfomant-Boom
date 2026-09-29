@@ -1,7 +1,6 @@
 package com.nstut.explosion;
 
 import java.util.List;
-import java.util.Map;
 import net.minecraft.SharedConstants;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.server.level.ServerLevel;
@@ -31,7 +30,8 @@ class VanillaExplosionAdapterTest {
         when(moving.getDeltaMovement()).thenReturn(velocity);
         Vec3 impulse = new Vec3(0.25, 0.5, -0.125);
 
-        VanillaExplosionAdapter.sendEffects(level, Vec3.ZERO, 4, Map.of(moving, impulse));
+        moving.connection.send(VanillaExplosionAdapter.clientPacket(Vec3.ZERO, 4, impulse));
+        VanillaExplosionAdapter.sendEffects(level, Vec3.ZERO, 4, java.util.Set.of(moving));
 
         var packet = ArgumentCaptor.forClass(ClientboundExplodePacket.class);
         verify(moving.connection, times(1)).send(packet.capture());
@@ -82,6 +82,6 @@ class VanillaExplosionAdapterTest {
             VanillaExplosionAdapter.hurt(level, explosion, player, hits);
             assertTrue(hits.isEmpty(), "flying creative players must not receive a client impulse");
         }
-        verifyNoInteractions(player.connection); // One combined effects packet is sent after the damage phase.
+        verifyNoInteractions(player.connection); // The scheduler sends the recorded impulse before yielding.
     }
 }

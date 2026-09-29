@@ -68,6 +68,7 @@ public final class ExplosionScheduler {
         ObjectArrayList<BlockPos> order;
         List<Entity> entities;
         final java.util.Map<net.minecraft.server.level.ServerPlayer, Vec3> hitPlayers = new java.util.HashMap<>();
+        final java.util.Set<net.minecraft.server.level.ServerPlayer> effectsSent = new java.util.HashSet<>();
         boolean started, calculated, damaged;
         int entityIndex, blockIndex, changed, passes;
         long work, maximum;
@@ -96,14 +97,24 @@ public final class ExplosionScheduler {
             }
             if (!damaged) {
                 while (entityIndex < entities.size()) {
-                    VanillaExplosionAdapter.hurt(level, explosion, entities.get(entityIndex++), hitPlayers);
+                    Entity entity = entities.get(entityIndex++);
+                    VanillaExplosionAdapter.hurt(level, explosion, entity, hitPlayers);
+                    // Send the additive impulse in the same slice as the server velocity change.
+                    // Evaluate range now, before a yielded task lets the player move again.
+                    if (entity instanceof net.minecraft.server.level.ServerPlayer player) {
+                        Vec3 impulse = hitPlayers.remove(player);
+                        if (impulse != null && player.distanceToSqr(center) < 4096.0) {
+                            player.connection.send(VanillaExplosionAdapter.clientPacket(center, power, impulse));
+                            effectsSent.add(player);
+                        }
+                    }
                     if (System.nanoTime() >= deadline) return false;
                 }
                 damaged=true; entities=null;
                 order=new ObjectArrayList<>(calculation.affectedBlocks());
                 VanillaExplosionAdapter.shuffle(order, level.getRandom());
-                VanillaExplosionAdapter.sendEffects(level, center, power, hitPlayers);
-                hitPlayers.clear();
+                VanillaExplosionAdapter.sendEffects(level, center, power, effectsSent);
+                effectsSent.clear();
             }
             while (blockIndex < order.size()) {
                 BlockPos pos=order.get(blockIndex++);
