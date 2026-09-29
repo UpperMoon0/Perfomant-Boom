@@ -10,6 +10,15 @@ import live_boom_test as live
 
 
 class HarnessTests(unittest.TestCase):
+    def test_windows_interactive_launch_preserves_forge_discovery_environment(self):
+        source={'MOD_CLASSES':'main%%classes;main%%resources','MCP_MAPPINGS':'loom.stub',
+                'PERFOMANT_BOOM_TEST_RUN':'123','JAVA_HOME':'jdk'}
+        self.assertEqual(source,live.interactive_environment(source))
+
+    def test_windows_launch_does_not_serialize_shell_credentials(self):
+        source={'GH_TOKEN':'private','CURSEFORGE_API_TOKEN':'private','MOD_CLASSES':'main%%classes'}
+        self.assertEqual({'MOD_CLASSES':'main%%classes'},live.interactive_environment(source))
+
     def test_repeated_jvm_module_flags_remain_valid(self):
         live.validate_launch({'command':['java','--add-opens','a/b=c','--add-opens','d/e=f',
             'dev.architectury.transformer.TransformerRuntime'],'cwd':'run','environment':{}})

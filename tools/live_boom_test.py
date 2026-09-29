@@ -31,6 +31,9 @@ FATAL = (
     "Failed to start the minecraft server",
     "Critical injection failure",
     "BUILD FAILED",
+    "Mod Loading has failed",
+    "Mod loading error has occurred",
+    "Cowardly refusing to send event",
     "redefining classes",
     "Changes detected",
 )
@@ -222,6 +225,14 @@ def popen(cmd, root: Path, env: dict[str, str]):
     return subprocess.Popen(cmd, **kwargs)
 
 
+def interactive_environment(env: dict[str, str]) -> dict[str, str]:
+    # Only launch inputs cross the service/desktop boundary; never serialize the
+    # shell's credentials into an evidence command file. Forge needs both userdev keys.
+    allowed={"JAVA_HOME", "GRADLE_USER_HOME", "MOD_CLASSES", "MCP_MAPPINGS"}
+    return {key: value for key, value in env.items()
+            if key.startswith("PERFOMANT_BOOM_") or key in allowed}
+
+
 def launch_windows_interactive(
     cmd: list[str], root: Path, env: dict[str, str], target_session: int, log_path: Path
 ):
@@ -229,9 +240,8 @@ def launch_windows_interactive(
     log_path.unlink(missing_ok=True)
     wrapper = log_path.with_name(log_path.stem + "-session.cmd")
     lines = ["@echo off", f'cd /d "{root}"']
-    for key, value in sorted(env.items()):
-        if key.startswith("PERFOMANT_BOOM_") or key in ("JAVA_HOME", "GRADLE_USER_HOME"):
-            lines.append(f'set "{key}={value.replace("%", "%%")}"')
+    for key, value in sorted(interactive_environment(env).items()):
+        lines.append(f'set "{key}={value.replace("%", "%%")}"')
     if env.get("JAVA_HOME"):
         lines.append('set "PATH=%JAVA_HOME%\\bin;%PATH%"')
     lines.append(f'call {subprocess.list2cmdline(cmd)} > "{log_path}" 2>&1')
