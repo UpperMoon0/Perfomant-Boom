@@ -2,7 +2,6 @@ package com.nstut.explosion;
 
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
-import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
 import it.unimi.dsi.fastutil.shorts.ShortOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
@@ -14,6 +13,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.lighting.LightEngine;
 
 import java.util.List;
 
@@ -37,7 +37,6 @@ public final class ChunkBlockModifier {
         private final Heightmap motionBlocking;
         private final Heightmap motionBlockingNoLeaves;
         private final Int2ObjectOpenHashMap<ShortOpenHashSet> changedBySection = new Int2ObjectOpenHashMap<>();
-        private final IntOpenHashSet touchedSections = new IntOpenHashSet();
 
         private MutationContext(ServerLevel level, LevelChunk chunk) {
             this.level = level;
@@ -75,6 +74,9 @@ public final class ChunkBlockModifier {
 
             BlockState air = Blocks.AIR.defaultBlockState();
             section.setBlockState(localX, localY, localZ, air, false);
+            // A normal save may run between ANY two scheduler slices and clear this
+            // flag. Dirty every successful write, not just the first or final slice.
+            chunk.setUnsaved(true);
 
             // Mirror LevelChunk#setBlockState's heightmap maintenance. These calls are
             // O(1) for blocks below the current height and only scan downward when the
@@ -83,6 +85,19 @@ public final class ChunkBlockModifier {
             oceanFloor.update(localX, y, localZ, air);
             motionBlocking.update(localX, y, localZ, air);
             motionBlockingNoLeaves.update(localX, y, localZ, air);
+
+            // Mirror the decompiled 1.20.1 LevelChunk#setBlockState light path.
+            // Deferring these until the whole crater finishes leaves a partial save
+            // with stale skylight/section metadata and no queued interior light checks.
+            if (section.hasOnlyAir()) {
+                level.getLightEngine().updateSectionStatus(
+                    SectionPos.of(chunk.getPos(), chunk.getSectionYFromSectionIndex(sectionIndex)), true
+                );
+            }
+            if (LightEngine.hasDifferentLightProperties(chunk, pos, oldState, air)) {
+                chunk.getSkyLightSources().update(chunk, localX, y, localZ);
+                level.getLightEngine().checkBlock(pos);
+            }
 
             // This is the vanilla cleanup hook invoked by LevelChunk#setBlockState after
             // the palette write. The base implementation removes block entities/tickers;
@@ -95,7 +110,6 @@ public final class ChunkBlockModifier {
             // villager workstations. Raw section writes must not leave ghost POIs behind.
             level.onBlockStateChange(pos, oldState, air);
 
-            touchedSections.add(sectionIndex);
             changedBySection
                 .computeIfAbsent(sectionIndex, ignored -> new ShortOpenHashSet())
                 .add(packLocal(localX, localY, localZ));
@@ -104,31 +118,14 @@ public final class ChunkBlockModifier {
         }
 
         /**
-         * Rebuilds chunk-level skylight source metadata, updates empty-section state,
-         * marks the chunk dirty, and sends compact section block-change packets.
+         * Publishes this slice's compact section packets. Save/light bookkeeping is
+         * already complete for every write, even before this method is called.
+         * The scheduler discards the context before returning control to Minecraft.
          */
         public void finish() {
-            if (changedBySection.isEmpty()) {
-                return;
+            if (!changedBySection.isEmpty()) {
+                syncChangedSections();
             }
-
-            // Direct section writes bypass LevelChunk's per-block skylight source update.
-            // Rebuilding once per changed chunk is far cheaper for mass destruction.
-            chunk.getSkyLightSources().fillFrom(chunk);
-
-            touchedSections.forEach(sectionIndex -> {
-                LevelChunkSection section = chunk.getSection(sectionIndex);
-                if (section.hasOnlyAir()) {
-                    int sectionY = chunk.getSectionYFromSectionIndex(sectionIndex);
-                    level.getLightEngine().updateSectionStatus(
-                        SectionPos.of(chunk.getPos(), sectionY),
-                        true
-                    );
-                }
-            });
-
-            chunk.setUnsaved(true);
-            syncChangedSections();
         }
 
         public int changedBlockCount() {

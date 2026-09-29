@@ -2,6 +2,7 @@ package com.nstut;
 
 import com.mojang.brigadier.arguments.FloatArgumentType;
 import com.nstut.explosion.ExplosionScheduler;
+import com.nstut.explosion.BoomLifecycleIntegrationTest;
 import com.nstut.testing.BoomServerIntegrationTest;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
@@ -22,10 +23,14 @@ public final class ExampleMod {
     }
 
     public static void onServerTickStart(MinecraftServer server) {
-        BoomServerIntegrationTest.onServerTickStart(server);
+        if (!BoomLifecycleIntegrationTest.isArmed()) BoomServerIntegrationTest.onServerTickStart(server);
     }
 
     public static void onServerTick(MinecraftServer server) {
+        if (BoomLifecycleIntegrationTest.isArmed()) {
+            BoomLifecycleIntegrationTest.tick(server);
+            return;
+        }
         ExplosionScheduler.tick(server);
         BoomServerIntegrationTest.tick(server);
     }

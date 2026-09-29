@@ -95,6 +95,55 @@ class HarnessTests(unittest.TestCase):
         pump=Mock(); pump._thread.is_alive.return_value=False; pump.prefix='test'; pump.history=[live.CLIENT_PASS]
         live.assert_successful_exit(process,pump,1)
 
+    def lifecycle_fixture(self, root):
+        records = {
+            'lifecycle-ray-unload.json': dict(token='run', distinctChunk=True, selectedBefore=8, selectedAfter=8),
+            'lifecycle-mutation-unload.json': dict(token='run', distinctChunk=True, savedPrefixMatched=True,
+                detachedUnchanged=True, changedBefore=8, changedAfter=16),
+            'lifecycle-partial.json': dict(token='run', processed=8, total=500, changed=8),
+            'lifecycle-persistence.json': dict(token='run', processed=8, total=500, changed=8,
+                partialMatched=True, vanillaBlockLightMatched=True, metadataMatched=True),
+        }
+        for name, value in records.items(): (root/name).write_text(json.dumps(value))
+        return records
+
+    def test_complete_lifecycle_evidence_is_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); self.lifecycle_fixture(root)
+            live.verify_lifecycle_evidence(root,'run')
+
+    def test_lifecycle_evidence_requires_every_phase(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); self.lifecycle_fixture(root)
+            (root/'lifecycle-mutation-unload.json').unlink()
+            with self.assertRaises(OSError): live.verify_lifecycle_evidence(root,'run')
+
+    def test_lifecycle_evidence_rejects_foreign_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); self.lifecycle_fixture(root)
+            with self.assertRaisesRegex(ValueError,'different run'): live.verify_lifecycle_evidence(root,'other')
+
+    def test_lifecycle_evidence_cannot_claim_completed_task_as_partial(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); records=self.lifecycle_fixture(root)
+            records['lifecycle-partial.json']['processed']=500
+            (root/'lifecycle-partial.json').write_text(json.dumps(records['lifecycle-partial.json']))
+            with self.assertRaisesRegex(ValueError,'partial-mutation'): live.verify_lifecycle_evidence(root,'run')
+
+    def test_lifecycle_evidence_requires_actual_chunk_replacement(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); records=self.lifecycle_fixture(root)
+            records['lifecycle-ray-unload.json']['distinctChunk']=False
+            (root/'lifecycle-ray-unload.json').write_text(json.dumps(records['lifecycle-ray-unload.json']))
+            with self.assertRaisesRegex(ValueError,'ray chunk'): live.verify_lifecycle_evidence(root,'run')
+
+    def test_lifecycle_evidence_requires_vanilla_partial_light_parity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); records=self.lifecycle_fixture(root)
+            records['lifecycle-persistence.json']['vanillaBlockLightMatched']=False
+            (root/'lifecycle-persistence.json').write_text(json.dumps(records['lifecycle-persistence.json']))
+            with self.assertRaisesRegex(ValueError,'partial-mutation'): live.verify_lifecycle_evidence(root,'run')
+
     def test_incomplete_evidence_cannot_produce_summary(self):
         with tempfile.TemporaryDirectory() as tmp:
             p=Path(tmp); (p/'server-samples.json').write_text('[]')

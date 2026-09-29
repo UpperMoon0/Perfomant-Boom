@@ -177,6 +177,18 @@ public final class FastExplosionEngine {
          * Processes work until the supplied deadline. Returns true when calculation is complete.
          */
         public boolean processUntil(long deadlineNanos) {
+            // ServerChunkCache#getChunk's UNKNOWN ticket expires after one tick.
+            // Cache only inside this call; never retain LevelChunks across a yield.
+            try {
+                return processSlice(deadlineNanos);
+            } finally {
+                if (world instanceof ServerWorldView serverWorldView) {
+                    serverWorldView.clearCache();
+                }
+            }
+        }
+
+        private boolean processSlice(long deadlineNanos) {
             int checksUntilDeadline = 32;
 
             while (rayActive || nextRayIndex < RAY_DIRECTIONS.length) {
@@ -195,9 +207,6 @@ public final class FastExplosionEngine {
                 }
             }
 
-            if (world instanceof ServerWorldView serverWorldView) {
-                serverWorldView.clearCache();
-            }
             return true;
         }
 

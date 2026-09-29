@@ -74,7 +74,24 @@ def changelog(root: Path, version: str) -> Path:
     return path
 
 
+def guard_release_history(root: Path, version: str) -> None:
+    """All publication paths require the complete fetched stable-version tag history.
+
+    Inspect every vMAJOR.MINOR.PATCH tag, including annotated tags and tags not
+    reachable from HEAD. A repair push's parent is not a release-version floor.
+    """
+    if git(root, "rev-parse", "--is-shallow-repository") != "false":
+        raise ValueError("Release history is shallow; fetch full history and tags before publication")
+    versions = [tag[1:] for tag in git(root, "tag", "--list", "v*").splitlines()
+                if VERSION.fullmatch(tag[1:])]
+    if versions:
+        highest = max(versions, key=version_tuple)
+        if version_tuple(version) < version_tuple(highest):
+            raise ValueError(f"Refusing a version downgrade below release history: {highest} -> {version}")
+
+
 def guard_tag(root: Path, version: str) -> None:
+    guard_release_history(root, version)
     tagged = tag_commit(root, f"v{version}")
     if tagged and tagged != head_sha(root):
         raise ValueError(f"v{version} already belongs to {tagged}; bump mod_version, never move an existing tag")
@@ -85,6 +102,7 @@ def plan(root: Path, event: str, before: str, ref: str) -> dict[str, str]:
         raise ValueError("Releases are allowed only for main push/manual events")
     cfg = config(root)
     current = cfg["mod_version"]
+    guard_release_history(root, current)
     previous = None
     if before and before != "0" * 40:
         if not SHA.fullmatch(before):

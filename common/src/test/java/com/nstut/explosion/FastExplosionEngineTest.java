@@ -39,6 +39,34 @@ class FastExplosionEngineTest {
     }
 
     @Test
+    void runtimeReacquiresReplacedChunkAfterEveryYield() {
+        var level = org.mockito.Mockito.mock(net.minecraft.server.level.ServerLevel.class);
+        var first = org.mockito.Mockito.mock(net.minecraft.world.level.chunk.LevelChunk.class);
+        var replacement = org.mockito.Mockito.mock(net.minecraft.world.level.chunk.LevelChunk.class);
+        var section = org.mockito.Mockito.mock(net.minecraft.world.level.chunk.LevelChunkSection.class);
+        var bedrock = org.mockito.Mockito.mock(net.minecraft.world.level.chunk.LevelChunkSection.class);
+        org.mockito.Mockito.when(section.getBlockState(org.mockito.ArgumentMatchers.anyInt(),
+            org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt()))
+            .thenReturn(Blocks.NETHERRACK.defaultBlockState());
+        org.mockito.Mockito.when(bedrock.getBlockState(org.mockito.ArgumentMatchers.anyInt(),
+            org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt()))
+            .thenReturn(Blocks.BEDROCK.defaultBlockState());
+        org.mockito.Mockito.when(first.getSections()).thenReturn(new net.minecraft.world.level.chunk.LevelChunkSection[]{section});
+        org.mockito.Mockito.when(replacement.getSections()).thenReturn(new net.minecraft.world.level.chunk.LevelChunkSection[]{bedrock});
+        var current = new java.util.concurrent.atomic.AtomicReference<>(first);
+        org.mockito.Mockito.when(level.getChunk(org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt()))
+            .thenAnswer(call -> current.get());
+        org.mockito.Mockito.when(level.getRandom()).thenReturn(RandomSource.create(71));
+        var calculation = FastExplosionEngine.create(level, new Vec3(8.5, 96.5, 8.5), 10);
+        assertFalse(calculation.processUntil(Long.MIN_VALUE));
+        current.set(replacement);
+        org.mockito.Mockito.clearInvocations(first, replacement, level);
+        assertFalse(calculation.processUntil(Long.MIN_VALUE));
+        org.mockito.Mockito.verify(replacement, org.mockito.Mockito.atLeastOnce()).getSections();
+        org.mockito.Mockito.verify(first, org.mockito.Mockito.never()).getSections();
+    }
+
+    @Test
     void matchesVanillaRaySelectionForNonAirBlocks() {
         FastExplosionEngine.BlockView world = world(pos -> {
             if (pos.getY() < -3) {

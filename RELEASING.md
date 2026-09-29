@@ -8,7 +8,7 @@
 
 The main-branch push runs release preflight, the same reusable checks as PR validation, and publication. It creates `v<version>` at the tested commit and uploads exactly the Fabric and Forge Minecraft 1.20.1 runnable JARs, `SHA256SUMS`, and `manifest.json`. It never releases on a PR/feature branch or from a tag-only workflow.
 
-The current automated release gate covers JVM regressions, both loader builds, release-tooling tests, workflow syntax, loader metadata, checksums, and commit provenance. The dedicated-server/real-client work is not yet part of this gate. Do not interpret green CI as proof of client convergence or vanilla end-to-end equivalence; keep PR #1 in draft until that separate runtime work is integrated and reviewed.
+The automated release gate includes JVM regressions, both loader builds, release/harness tests, workflow syntax, Forge GameTest, and frozen dedicated-server/real-client and persistence tests on both loaders. Green results prove the documented fixtures, not universal vanilla end-to-end equivalence; see `TESTING.md` for semantic and measurement limitations.
 
 ## Publication destinations
 
@@ -20,11 +20,11 @@ CurseForge publication is optional until the project is configured. Set reposito
 
 Use **Actions -> Release -> Run workflow -> main** to retry. An untagged version also retries when a release workflow, release helper, or changelog repair reaches main. An unchanged already-tagged version is a no-op on ordinary pushes.
 
-Existing tags must point at the exact release commit. A tag pointing elsewhere is an error, never force-moved. After a tag has been created, rerun the original workflow run at its original SHA; publishing a corrected new commit requires a version bump. Downgrades, snapshots, malformed versions, empty changelogs, missing/extra loader artifacts and mismatched JAR versions are rejected.
+Existing tags must point at the exact release commit. A tag pointing elsewhere is an error, never force-moved. After a tag has been created, rerun the original workflow run at its original SHA; publishing a corrected new commit requires a version bump. All publication paths compare stable versions against the highest fetched `vMAJOR.MINOR.PATCH` tag (numeric ordering, including tags outside HEAD ancestry), not only the previous push. A shallow history is rejected. Manual and repair retries cannot publish a lower version; same-commit retries of the latest version remain valid. Downgrades, snapshots, malformed versions, empty changelogs, missing/extra loader artifacts and mismatched JAR versions are rejected.
 
 Publication stages a GitHub draft, uploads the complete artifact set, and only then makes it public. A retry may finish that draft. An already-public GitHub release is not overwritten: its recorded checksums must match the rebuilt same-commit artifacts. Failed or partial CurseForge uploads are subject to the service's duplicate-upload behavior; inspect those uploads before retrying.
 
-No publication has been performed merely by opening the PR. Do not merge the draft to force a release while runtime verification is outstanding.
+No publication has been performed merely by opening the PR. Do not merge to force a release while runtime verification is outstanding.
 
 ## Mandatory runtime validation
 

@@ -115,6 +115,64 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "downgrade"):
             self.plan()
 
+    def rejected_downgrade(self):
+        self.git("tag", "-a", "v1.0.1", "-m", "Released")
+        self.write_version("0.9.9")
+        self.commit()
+        return release.head_sha(self.root)
+
+    def test_manual_retry_rejects_untagged_downgrade(self):
+        self.rejected_downgrade()
+        with self.assertRaisesRegex(ValueError, "release history"):
+            self.plan(event="workflow_dispatch", before="")
+
+    def test_repair_push_rejects_previously_rejected_downgrade(self):
+        previous = self.rejected_downgrade()
+        (self.root / "changelog/0.9.9.md").write_text("Repaired changelog")
+        self.commit()
+        with self.assertRaisesRegex(ValueError, "release history"):
+            self.plan(before=previous)
+
+    def test_final_publication_guard_rejects_downgrade(self):
+        self.rejected_downgrade()
+        with self.assertRaisesRegex(ValueError, "release history"):
+            release.guard_tag(self.root, "0.9.9")
+
+    def test_zero_before_cannot_bypass_release_history(self):
+        self.rejected_downgrade()
+        with self.assertRaisesRegex(ValueError, "release history"):
+            self.plan(before="0" * 40)
+
+    def test_release_history_uses_numeric_not_lexical_order(self):
+        self.git("tag", "v1.9.9")
+        self.git("tag", "v1.10.0")
+        self.write_version("1.9.10")
+        with self.assertRaisesRegex(ValueError, "1.10.0"):
+            self.plan(event="workflow_dispatch", before="")
+        self.write_version("1.10.1")
+        self.assertEqual(self.plan(event="workflow_dispatch", before="")["release"], "true")
+
+    def test_unrelated_tags_are_not_stable_release_versions(self):
+        for tag in ("benchmark-v99", "v2.0.0-preview", "v01.0.0", "vnotes"):
+            self.git("tag", tag)
+        self.assertEqual(self.plan()["release"], "true")
+
+    def test_history_includes_tags_outside_head_ancestry(self):
+        original = release.head_sha(self.root)
+        self.write_version("2.0.0")
+        self.commit()
+        self.git("tag", "v2.0.0")
+        self.git("checkout", "--detach", original)
+        with self.assertRaisesRegex(ValueError, "2.0.0"):
+            self.plan(event="workflow_dispatch", before="")
+
+    def test_shallow_history_fails_closed(self):
+        destination = self.root / "shallow"
+        subprocess.run(["git", "clone", "--depth=1", self.root.as_uri(), str(destination)],
+                       check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        with self.assertRaisesRegex(ValueError, "shallow"):
+            release.plan(destination, "workflow_dispatch", "", "refs/heads/main")
+
     def test_duplicate_property_rejected(self):
         with self.assertRaises(ValueError):
             release.properties("mod_version=1.0.0\nmod_version=1.0.1\n")

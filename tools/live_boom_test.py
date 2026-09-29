@@ -500,6 +500,25 @@ def summarize(evidence: Path) -> list[dict]:
     return summary
 
 
+def verify_lifecycle_evidence(evidence: Path, token: str) -> None:
+    ray = json.loads((evidence/'lifecycle-ray-unload.json').read_text(encoding='utf-8'))
+    mutation = json.loads((evidence/'lifecycle-mutation-unload.json').read_text(encoding='utf-8'))
+    partial = json.loads((evidence/'lifecycle-partial.json').read_text(encoding='utf-8'))
+    reload = json.loads((evidence/'lifecycle-persistence.json').read_text(encoding='utf-8'))
+    if any(item.get('token') != token for item in (ray, mutation, partial, reload)):
+        raise ValueError('Lifecycle evidence belongs to a different run')
+    if not (ray.get('distinctChunk') is True and ray['selectedBefore'] > 0
+            and ray['selectedBefore'] == ray['selectedAfter']):
+        raise ValueError('Missing real ray chunk replacement evidence')
+    if not (all(mutation.get(key) is True for key in ('distinctChunk', 'savedPrefixMatched', 'detachedUnchanged'))
+            and 0 < mutation['changedBefore'] < mutation['changedAfter']):
+        raise ValueError('Missing real mutation chunk unload/reload evidence')
+    if not (0 < partial['processed'] < partial['total'] and partial['changed'] > 0
+            and all(reload.get(key) is True for key in ('partialMatched', 'vanillaBlockLightMatched', 'metadataMatched'))
+            and all(reload[key] == partial[key] for key in ('processed', 'total', 'changed'))):
+        raise ValueError('Missing partial-mutation shutdown/persistence evidence')
+
+
 def run(loader: str, timeout: int, require_clean: bool = False) -> int:
     global GUARD
     root = Path(__file__).resolve().parents[1]
@@ -516,7 +535,7 @@ def run(loader: str, timeout: int, require_clean: bool = False) -> int:
     evidence.mkdir(parents=True, exist_ok=False)
     processes = []
     result = {'loader': loader, 'run_id': run_id, 'gameplay_pass': False, 'clean_shutdown': False,
-              'persistence_pass': False, 'source_unchanged': False, 'forced_cleanup': False}
+              'persistence_pass': False, 'lifecycle_pass': False, 'source_unchanged': False, 'forced_cleanup': False}
     started = time.monotonic()
     try:
         result['git_head'] = subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
@@ -576,6 +595,18 @@ def run(loader: str, timeout: int, require_clean: bool = False) -> int:
         reload_out.wait_for_any(('PERFOMANT_BOOM_E2E_PERSISTENCE_PASS',),timeout,FATAL+(SERVER_FAIL,))
         assert_successful_exit(reload_server,reload_out,120)
         result['persistence_pass'] = True
+        # Real chunk unload/replacement, then an immediate partial-slice normal stop
+        # and a second fresh JVM. No graphical client participates in these phases.
+        for mode, marker in (('exercise', 'PERFOMANT_BOOM_LIFECYCLE_PARTIAL_STOP_PASS'),
+                             ('reload', 'PERFOMANT_BOOM_LIFECYCLE_RELOAD_PASS')):
+            lifecycle_env = env | server_spec['environment'] | {'PERFOMANT_BOOM_LIFECYCLE': mode}
+            lifecycle = popen(server_spec['command'], Path(server_spec['cwd']), lifecycle_env)
+            processes.append(lifecycle)
+            lifecycle_out = OutputPump(lifecycle, 'lifecycle-'+mode, evidence/f'lifecycle-{mode}.log')
+            lifecycle_out.wait_for_any((marker,), timeout, FATAL+(SERVER_FAIL,))
+            assert_successful_exit(lifecycle, lifecycle_out, 120)
+        verify_lifecycle_evidence(evidence, run_id)
+        result['lifecycle_pass'] = True
         frozen.verify_hashes()
         result['source_unchanged'] = True
         result['summary'] = summarize(evidence)

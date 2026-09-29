@@ -81,6 +81,12 @@ public final class ExplosionScheduler {
     }
 
     public static void tick(MinecraftServer server) {
+        tickUntil(server, System.nanoTime() + WORK_BUDGET_NANOS);
+    }
+
+    // Shared production driver; package-local deadline permits deterministic runtime
+    // suspension tests without sleeping, mocking chunks, or changing the work budget.
+    static void tickUntil(MinecraftServer server, long deadline) {
         if (activeServer == null) {
             activeServer = server;
         } else if (activeServer != server) {
@@ -94,7 +100,6 @@ public final class ExplosionScheduler {
             return;
         }
 
-        long deadline = System.nanoTime() + WORK_BUDGET_NANOS;
         while (!TASK_QUEUE.isEmpty()) {
             ExplosionTask task = TASK_QUEUE.peek();
             if (!task.isValidFor(server)) {
@@ -119,6 +124,15 @@ public final class ExplosionScheduler {
 
     static int pendingTasks() {
         return TASK_QUEUE.size();
+    }
+
+    record PendingMutation(ChunkPos chunk, int processed, int total, int changed) {}
+
+    static PendingMutation pendingMutation() {
+        ExplosionTask task = TASK_QUEUE.peek();
+        if (task == null || task.currentBlocks == null) return null;
+        return new PendingMutation(new ChunkPos(task.currentEntry.getLongKey()),
+            task.currentBlockIndex, task.currentBlocks.size(), task.actualChangedBlocks);
     }
 
     private static final class ExplosionTask {
@@ -182,6 +196,16 @@ public final class ExplosionScheduler {
          * Returns true when the whole task is complete.
          */
         private boolean processUntil(long deadlineNanos) {
+            try {
+                return processSlice(deadlineNanos);
+            } finally {
+                // No live chunk, heightmap or section reference survives a yield,
+                // cancellation, dimension replacement or an exceptional callback.
+                flushMutationSlice();
+            }
+        }
+
+        private boolean processSlice(long deadlineNanos) {
             if (!started) {
                 started = true;
                 beginExplosionEffects();
@@ -225,6 +249,10 @@ public final class ExplosionScheduler {
                         return processPostUpdates(deadlineNanos);
                     }
                     beginNextChunk();
+                }
+                if (mutation == null) {
+                    ChunkPos chunkPos = new ChunkPos(currentEntry.getLongKey());
+                    mutation = ChunkBlockModifier.begin(level, level.getChunk(chunkPos.x, chunkPos.z));
                 }
 
                 while (currentBlockIndex < currentBlocks.size()) {
@@ -356,10 +384,8 @@ public final class ExplosionScheduler {
         }
         private void beginNextChunk() {
             currentEntry = chunkIterator.next();
-            ChunkPos chunkPos = new ChunkPos(currentEntry.getLongKey());
             currentBlocks = currentEntry.getValue();
             currentBlockIndex = 0;
-            mutation = ChunkBlockModifier.begin(level, level.getChunk(chunkPos.x, chunkPos.z));
         }
 
         private boolean removeBlock(long packed) {
@@ -393,8 +419,8 @@ public final class ExplosionScheduler {
 
             boolean touchesSurvivor = false;
 
-            // Defer lighting until all crater blocks are gone so cross-chunk propagation
-            // cannot be blocked by chunks that have not been processed yet.
+            // Each mutation already queues vanilla light work. Recheck the final
+            // crater boundary after all chunks are processed as well.
             if (oldState.getLightEmission() > 0) {
                 collectLightCheck(x, y, z);
             }
@@ -484,8 +510,18 @@ public final class ExplosionScheduler {
             return true;
         }
 
+        private void flushMutationSlice() {
+            if (mutation != null) {
+                try {
+                    mutation.finish();
+                } finally {
+                    mutation = null;
+                }
+            }
+        }
+
         private void finishCurrentChunk() {
-            mutation.finish();
+            flushMutationSlice();
             // We no longer need this chunk's primitive list once its mutations and packets
             // are complete. Keep only the global set needed for boundary tests.
             chunkIterator.remove();
