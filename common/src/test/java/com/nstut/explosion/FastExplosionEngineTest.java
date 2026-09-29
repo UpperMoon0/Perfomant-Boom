@@ -1,6 +1,8 @@
 package com.nstut.explosion;
 
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+import net.minecraft.Util;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.Bootstrap;
@@ -12,6 +14,7 @@ import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashSet;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -95,6 +98,56 @@ class FastExplosionEngineTest {
         assertEquals(expected, calculation.blocks());
     }
 
+
+
+    @Test
+    void preservesVanillaAffectedShuffleAndLevelRandomStateIncludingAir() {
+        FastExplosionEngine.BlockView world = world(pos ->
+            ((pos.getX() * 31 + pos.getY() * 17 + pos.getZ()) & 7) == 0
+                ? Blocks.STONE.defaultBlockState()
+                : Blocks.AIR.defaultBlockState()
+        );
+        Vec3 center = new Vec3(0.5D, 4.5D, -0.5D);
+        float power = 6.0F;
+        long seed = 0x51A77E5EEDL;
+
+        RandomSource actualRandom = RandomSource.create(seed);
+        FastExplosionEngine.IncrementalCalculation calculation =
+            FastExplosionEngine.create(world, center, power, actualRandom);
+        assertTrue(calculation.processUntil(Long.MAX_VALUE));
+
+        RandomSource vanillaRandom = RandomSource.create(seed);
+        HashSet<BlockPos> expectedAffected =
+            vanillaReferenceAffected(world, center, power, vanillaRandom);
+        assertEquals(expectedAffected, calculation.affectedBlocks());
+        assertTrue(calculation.affectedBlocks().size() > calculation.blockCount(),
+            "fixture must include vanilla-selected air positions");
+
+        ObjectArrayList<BlockPos> expectedOrder = new ObjectArrayList<>();
+        expectedOrder.addAll(expectedAffected);
+        Util.shuffle(expectedOrder, vanillaRandom);
+        ObjectArrayList<BlockPos> actualOrder =
+            ExplosionScheduler.vanillaDestructionOrder(calculation, actualRandom);
+
+        assertEquals(expectedOrder, actualOrder,
+            "destruction order must be vanilla's shuffled HashSet order");
+        assertEquals(vanillaRandom.nextLong(), actualRandom.nextLong(),
+            "level RNG must match vanilla after ray selection + full affected-position shuffle");
+    }
+
+    @Test
+    void serverSideSoundPitchUsesIndependentRandomSource() {
+        RandomSource levelRandom = RandomSource.create(0x51504CL);
+        RandomSource expectedLevel = RandomSource.create(0x51504CL);
+        RandomSource effectsRandom = RandomSource.create(0xEFFEC75L);
+
+        float pitch = ExplosionScheduler.serverSideSoundPitch(effectsRandom);
+
+        assertTrue(pitch >= 0.56F && pitch <= 0.84F);
+        assertEquals(expectedLevel.nextLong(), levelRandom.nextLong(),
+            "server-side sound generation must not consume ServerLevel.random");
+    }
+
     @Test
     void centerBedrockIsNotDestroyedBeforeResistanceIsApplied() {
         FastExplosionEngine.BlockView world = world(pos ->
@@ -163,6 +216,74 @@ class FastExplosionEngineTest {
                 return stateAt.apply(new BlockPos(x, y, z));
             }
         };
+    }
+
+
+
+    private static HashSet<BlockPos> vanillaReferenceAffected(
+        FastExplosionEngine.BlockView world,
+        Vec3 center,
+        float power,
+        RandomSource random
+    ) {
+        HashSet<BlockPos> result = new HashSet<>();
+
+        for (int rayX = 0; rayX < 16; rayX++) {
+            for (int rayY = 0; rayY < 16; rayY++) {
+                rayLoop:
+                for (int rayZ = 0; rayZ < 16; rayZ++) {
+                    if (rayX != 0 && rayX != 15
+                        && rayY != 0 && rayY != 15
+                        && rayZ != 0 && rayZ != 15) {
+                        continue;
+                    }
+
+                    double dx = (float)rayX / 15.0F * 2.0F - 1.0F;
+                    double dy = (float)rayY / 15.0F * 2.0F - 1.0F;
+                    double dz = (float)rayZ / 15.0F * 2.0F - 1.0F;
+                    double length = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                    dx /= length;
+                    dy /= length;
+                    dz /= length;
+
+                    double x = center.x;
+                    double y = center.y;
+                    double z = center.z;
+
+                    for (float strength = power * (0.7F + random.nextFloat() * 0.6F);
+                         strength > 0.0F;
+                         strength -= 0.22500001F) {
+                        int blockX = Mth.floor(x);
+                        int blockY = Mth.floor(y);
+                        int blockZ = Mth.floor(z);
+                        if (!world.isInWorldBounds(blockX, blockY, blockZ)) {
+                            continue rayLoop;
+                        }
+
+                        BlockState state = world.getBlockState(blockX, blockY, blockZ);
+                        var fluid = state.getFluidState();
+                        if (!state.isAir() || !fluid.isEmpty()) {
+                            strength -= (
+                                Math.max(
+                                    state.getBlock().getExplosionResistance(),
+                                    fluid.getExplosionResistance()
+                                ) + 0.3F
+                            ) * 0.3F;
+                        }
+
+                        if (strength > 0.0F) {
+                            result.add(new BlockPos(blockX, blockY, blockZ));
+                        }
+
+                        x += dx * (double)0.3F;
+                        y += dy * (double)0.3F;
+                        z += dz * (double)0.3F;
+                    }
+                }
+            }
+        }
+
+        return result;
     }
 
     /**

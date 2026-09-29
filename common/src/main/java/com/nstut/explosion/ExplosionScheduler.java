@@ -1,10 +1,10 @@
 package com.nstut.explosion;
 
 import com.nstut.ExampleMod;
-import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
-import it.unimi.dsi.fastutil.longs.LongArrayList;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
-import it.unimi.dsi.fastutil.objects.ObjectIterator;
+import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+import net.minecraft.Util;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.particles.ParticleTypes;
@@ -14,6 +14,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
@@ -129,16 +130,37 @@ public final class ExplosionScheduler {
 
     static PendingMutation pendingMutation() {
         ExplosionTask task = TASK_QUEUE.peek();
-        if (task == null || task.currentBlocks == null) return null;
-        return new PendingMutation(new ChunkPos(task.currentEntry.getLongKey()),
-            task.currentBlockIndex, task.currentBlocks.size(), task.actualChangedBlocks);
+        if (task == null || task.destructionOrder == null || task.destructionIndex <= 0
+            || task.actualChangedBlocks <= 0 || task.lastChangedChunk == null) {
+            return null;
+        }
+        return new PendingMutation(task.lastChangedChunk,
+            task.destructionIndex, task.destructionOrder.size(), task.actualChangedBlocks);
     }
 
     // Read-only fixture assertion: distinguish an unprocessed interior candidate
     // from a survivor outside the selected final crater.
     static boolean pendingSelectionContains(BlockPos pos) {
         ExplosionTask task = TASK_QUEUE.peek();
-        return task != null && task.calculation.blocks().contains(pos.asLong());
+        return task != null && task.calculation.affectedBlocks().contains(pos);
+    }
+
+    static float serverSideSoundPitch(RandomSource effectsRandom) {
+        return (1.0F + (effectsRandom.nextFloat() - effectsRandom.nextFloat()) * 0.2F) * 0.7F;
+    }
+
+    static ObjectArrayList<BlockPos> vanillaDestructionOrder(
+        FastExplosionEngine.IncrementalCalculation calculation,
+        RandomSource random
+    ) {
+        // Vanilla 1.20.1 copies its java.util.HashSet into an ObjectArrayList and
+        // shuffles EVERY affected position, including air, with Level.random.
+        // Keeping air entries is required both for exact RNG advancement and for
+        // cases where earlier physics makes a formerly-air position non-air.
+        ObjectArrayList<BlockPos> order = new ObjectArrayList<>();
+        order.addAll(calculation.affectedBlocks());
+        Util.shuffle(order, random);
+        return order;
     }
 
     private static final class ExplosionTask {
@@ -148,18 +170,18 @@ public final class ExplosionScheduler {
         private final FastExplosionEngine.IncrementalCalculation calculation;
         private final Consumer<ExplosionMetrics> completion;
         private final LongOpenHashSet queuedLightChecks = new LongOpenHashSet();
+        private final Long2ObjectOpenHashMap<ChunkBlockModifier.MutationContext> sliceMutations =
+            new Long2ObjectOpenHashMap<>();
+        private final RandomSource effectsRandom = RandomSource.create();
         private final long createdNanos = System.nanoTime();
-        private final BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
         private final BlockPos.MutableBlockPos lightCheckPos = new BlockPos.MutableBlockPos();
 
         private boolean started;
         private boolean calculationFinished;
-        private ObjectIterator<Long2ObjectMap.Entry<LongArrayList>> chunkIterator;
-        private Long2ObjectMap.Entry<LongArrayList> currentEntry;
-        private LongArrayList currentBlocks;
-        private int currentBlockIndex;
-        private ChunkBlockModifier.MutationContext mutation;
+        private ObjectArrayList<BlockPos> destructionOrder;
+        private int destructionIndex;
         private int actualChangedBlocks;
+        private ChunkPos lastChangedChunk;
         private it.unimi.dsi.fastutil.longs.LongIterator lightCheckIterator;
         private boolean postUpdatesStarted;
         private List<Entity> entitiesToDamage;
@@ -228,10 +250,11 @@ public final class ExplosionScheduler {
                 }
 
                 calculationFinished = true;
-                chunkIterator = calculation.blocksByChunk().long2ObjectEntrySet().fastIterator();
+                destructionOrder = vanillaDestructionOrder(calculation, level.getRandom());
                 ExampleMod.LOGGER.info(
-                    "Explosion calculation complete: {} blocks from {} ray samples at {} (power {})",
+                    "Explosion calculation complete: {} non-air blocks / {} vanilla affected positions from {} ray samples at {} (power {})",
                     calculation.blockCount(),
+                    destructionOrder.size(),
                     calculation.sampleCount(),
                     center,
                     power
@@ -247,44 +270,32 @@ public final class ExplosionScheduler {
             }
 
             int checksUntilDeadline = 8;
-            while (true) {
-                if (currentBlocks == null) {
-                    if (!chunkIterator.hasNext()) {
-                        return processPostUpdates(deadlineNanos);
-                    }
-                    beginNextChunk();
-                }
-                if (mutation == null) {
-                    ChunkPos chunkPos = new ChunkPos(currentEntry.getLongKey());
-                    mutation = ChunkBlockModifier.begin(level, level.getChunk(chunkPos.x, chunkPos.z));
+            while (destructionIndex < destructionOrder.size()) {
+                BlockPos pos = destructionOrder.get(destructionIndex++);
+                if (removeBlock(pos)) {
+                    actualChangedBlocks++;
+                    lastChangedChunk = new ChunkPos(pos);
                 }
 
-                while (currentBlockIndex < currentBlocks.size()) {
-                    long packed = currentBlocks.getLong(currentBlockIndex++);
-                    if (removeBlock(packed)) {
-                        actualChangedBlocks++;
+                if (--checksUntilDeadline == 0) {
+                    checksUntilDeadline = 8;
+                    if (System.nanoTime() >= deadlineNanos) {
+                        return false;
                     }
-
-                    if (--checksUntilDeadline == 0) {
-                        checksUntilDeadline = 8;
-                        if (System.nanoTime() >= deadlineNanos) {
-                            return false;
-                        }
-                    }
-                }
-
-                finishCurrentChunk();
-                if (System.nanoTime() >= deadlineNanos) {
-                    return false;
                 }
             }
+
+            return processPostUpdates(deadlineNanos);
         }
 
         private void beginExplosionEffects() {
             level.gameEvent(null, GameEvent.EXPLODE, center);
             prepareEntityDamage();
 
-            float pitch = (1.0F + (level.getRandom().nextFloat() - level.getRandom().nextFloat()) * 0.2F) * 0.7F;
+            // Vanilla 1.20.1 draws explosion sound pitch from the CLIENT level RNG.
+            // This scheduler emits the sound server-side, so use task-local randomness;
+            // consuming ServerLevel.random here would move gameplay RNG ahead of vanilla.
+            float pitch = serverSideSoundPitch(effectsRandom);
             level.playSound(
                 null,
                 center.x,
@@ -386,19 +397,20 @@ public final class ExplosionScheduler {
                 player.connection.send(new ClientboundSetEntityMotionPacket(player));
             }
         }
-        private void beginNextChunk() {
-            currentEntry = chunkIterator.next();
-            currentBlocks = currentEntry.getValue();
-            currentBlockIndex = 0;
-        }
+        private boolean removeBlock(BlockPos pos) {
+            int x = pos.getX();
+            int y = pos.getY();
+            int z = pos.getZ();
 
-        private boolean removeBlock(long packed) {
-            int x = BlockPos.getX(packed);
-            int y = BlockPos.getY(packed);
-            int z = BlockPos.getZ(packed);
+            long chunkKey = ChunkPos.asLong(x >> 4, z >> 4);
+            ChunkBlockModifier.MutationContext mutation = sliceMutations.get(chunkKey);
+            if (mutation == null) {
+                ChunkPos chunkPos = new ChunkPos(chunkKey);
+                mutation = ChunkBlockModifier.begin(level, level.getChunk(chunkPos.x, chunkPos.z));
+                sliceMutations.put(chunkKey, mutation);
+            }
 
-            mutablePos.set(x, y, z);
-            BlockState oldState = mutation.remove(mutablePos);
+            BlockState oldState = mutation.remove(pos);
             if (oldState == null) {
                 return false;
             }
@@ -418,11 +430,11 @@ public final class ExplosionScheduler {
                         Explosion.BlockInteraction.DESTROY
                     );
                 }
-                oldState.getBlock().wasExploded(level, mutablePos, blockCallbackExplosion);
+                oldState.getBlock().wasExploded(level, pos, blockCallbackExplosion);
             }
 
             // Each mutation already queues vanilla light work. Recheck the final
-            // crater boundary after all chunks are processed as well.
+            // crater boundary after all affected positions are processed as well.
             if (oldState.getLightEmission() > 0) {
                 collectLightCheck(x, y, z);
             }
@@ -457,9 +469,10 @@ public final class ExplosionScheduler {
 
                 // Boundary classification is complete. Drop the O(affected-blocks) data
                 // before the extra lighting rechecks can span more ticks.
+                calculation.affectedBlocks().clear();
                 calculation.blocks().clear();
                 calculation.blocksByChunk().clear();
-                chunkIterator = null;
+                destructionOrder = null;
 
                 lightCheckIterator = queuedLightChecks.iterator();
             }
@@ -485,25 +498,17 @@ public final class ExplosionScheduler {
         }
 
         private void flushMutationSlice() {
-            if (mutation != null) {
-                try {
-                    mutation.finish();
-                } finally {
-                    mutation = null;
-                }
+            if (sliceMutations.isEmpty()) {
+                return;
             }
-        }
-
-        private void finishCurrentChunk() {
-            flushMutationSlice();
-            // We no longer need this chunk's primitive list once its mutations and packets
-            // are complete. Keep only the global set needed for boundary tests.
-            chunkIterator.remove();
-
-            currentEntry = null;
-            currentBlocks = null;
-            mutation = null;
-            currentBlockIndex = 0;
+            try {
+                for (ChunkBlockModifier.MutationContext mutation : sliceMutations.values()) {
+                    mutation.finish();
+                }
+            } finally {
+                // Never retain live chunk/section/heightmap references across a yield.
+                sliceMutations.clear();
+            }
         }
 
         private void finishTask() {

@@ -52,8 +52,12 @@ public final class ChunkBlockModifier {
          * returning. General explosion loot is not processed here. Returns the previous
          * state, or {@code null} if there was nothing to change.
          */
-        public BlockState remove(BlockPos.MutableBlockPos pos) {
-            int y = pos.getY();
+        public BlockState remove(BlockPos pos) {
+            // Forge 1.20.1 intentionally snapshots mutable positions before block
+            // lifecycle callbacks. The scheduler reuses cursors elsewhere, so never
+            // let a callback retain a moving coordinate.
+            BlockPos stablePos = pos.immutable();
+            int y = stablePos.getY();
             int sectionIndex = chunk.getSectionIndex(y);
             LevelChunkSection[] sections = chunk.getSections();
             if (sectionIndex < 0 || sectionIndex >= sections.length) {
@@ -65,9 +69,9 @@ public final class ChunkBlockModifier {
                 return null;
             }
 
-            int localX = pos.getX() & 15;
+            int localX = stablePos.getX() & 15;
             int localY = y & 15;
-            int localZ = pos.getZ() & 15;
+            int localZ = stablePos.getZ() & 15;
             BlockState oldState = section.getBlockState(localX, localY, localZ);
             if (oldState.isAir()) {
                 return null;
@@ -95,16 +99,16 @@ public final class ChunkBlockModifier {
                     SectionPos.of(chunk.getPos(), chunk.getSectionYFromSectionIndex(sectionIndex)), true
                 );
             }
-            if (LightEngine.hasDifferentLightProperties(chunk, pos, oldState, air)) {
+            if (LightEngine.hasDifferentLightProperties(chunk, stablePos, oldState, air)) {
                 chunk.getSkyLightSources().update(chunk, localX, y, localZ);
-                level.getLightEngine().checkBlock(pos);
+                level.getLightEngine().checkBlock(stablePos);
             }
 
             // This is the vanilla cleanup hook invoked by LevelChunk#setBlockState after
             // the palette write. The base implementation removes block entities/tickers;
             // specialized blocks also clear rails/redstone/sensors and preserve container
             // contents. Calling it here is both more correct and cheaper than full setBlock.
-            oldState.onRemove(level, pos, air, false);
+            oldState.onRemove(level, stablePos, air, false);
 
             changedBySection
                 .computeIfAbsent(sectionIndex, ignored -> new ShortOpenHashSet())
@@ -115,8 +119,8 @@ public final class ChunkBlockModifier {
             // particular, sand above an interior support can survive this slice. These
             // notifications must run before any deadline check/save, not at the final
             // crater boundary: vanilla's resulting scheduled ticks are then saveable.
-            if (chunk.getBlockState(pos) == air) {
-                BlockPos physicsPos = pos.immutable();
+            if (chunk.getBlockState(stablePos) == air) {
+                BlockPos physicsPos = stablePos;
                 level.updateNeighborsAt(physicsPos, oldState.getBlock());
                 oldState.updateIndirectNeighbourShapes(level, physicsPos, 2, 511);
                 air.updateNeighbourShapes(level, physicsPos, 2, 511);

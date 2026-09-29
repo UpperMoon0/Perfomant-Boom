@@ -352,7 +352,10 @@ public final class BoomLifecycleIntegrationTest {
             level.getChunkSource().save(true);
             require(!chunk.isUnsaved(), "fixture must be clean before partial mutation");
             completed = false;
-            level.getRandom().setSeed(0x51CE5L);
+            // Seed chosen against vanilla's full affected-position shuffle so the
+            // support is in the first 8 processed positions, the sand is later, and
+            // all six support neighbors remain future candidates.
+            level.getRandom().setSeed(114L);
             ExplosionScheduler.scheduleTracked(level, Vec3.atCenterOf(center), 10, metrics -> completed = true);
             for (int i=0; i<10000 && ExplosionScheduler.pendingMutation() == null && !completed; i++) {
                 ExplosionScheduler.tickUntil(server, Long.MIN_VALUE);

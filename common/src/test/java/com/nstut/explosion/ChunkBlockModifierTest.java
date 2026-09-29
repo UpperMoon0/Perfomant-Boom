@@ -104,6 +104,30 @@ class ChunkBlockModifierTest {
         }
     }
 
+
+
+    @Test void onRemoveReceivesStableImmutablePosition() {
+        var f = new Fixture();
+        var oldState = spy(Blocks.NETHERRACK.defaultBlockState());
+        when(f.section.getBlockState(anyInt(), anyInt(), anyInt())).thenReturn(oldState);
+        var retained = new java.util.concurrent.atomic.AtomicReference<BlockPos>();
+        doAnswer(call -> {
+            retained.set(call.getArgument(1));
+            return null;
+        }).when(oldState).onRemove(eq(f.level), any(BlockPos.class),
+            eq(Blocks.AIR.defaultBlockState()), eq(false));
+
+        var cursor = new BlockPos.MutableBlockPos(1, 1, 1);
+        f.mutation.remove(cursor);
+        cursor.set(9, 9, 9);
+
+        assertNotNull(retained.get());
+        assertFalse(retained.get() instanceof BlockPos.MutableBlockPos,
+            "block lifecycle callbacks must never receive the scheduler's reusable cursor");
+        assertEquals(new BlockPos(1, 1, 1), retained.get(),
+            "retained callback position must not move when the caller reuses its cursor");
+    }
+
     @Test void removalDispatchesOldStatesIndirectShapesBeforeFinish() {
         var f = new Fixture();
         var oldState = spy(Blocks.NETHERRACK.defaultBlockState());

@@ -17,6 +17,9 @@ import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.server.level.ServerLevel;
 
+import java.util.HashSet;
+import java.util.Set;
+
 /**
  * Vanilla-compatible explosion ray calculation with a time-sliceable execution model.
  *
@@ -149,6 +152,11 @@ public final class FastExplosionEngine {
         private final Vec3 center;
         private final float power;
         private final float[] rayStrengths;
+        // Vanilla 1.20.1 collects every affected position, including air, in a
+        // java.util.HashSet before finalization. Preserve that exact collection shape:
+        // its iteration order is the input to Util.shuffle and therefore affects both
+        // destruction order and the level RNG state.
+        private final HashSet<BlockPos> affectedBlocks = new HashSet<>();
         private final LongOpenHashSet blocks = new LongOpenHashSet();
         private final Long2ObjectOpenHashMap<LongArrayList> blocksByChunk = new Long2ObjectOpenHashMap<>();
 
@@ -226,6 +234,10 @@ public final class FastExplosionEngine {
             return blocks;
         }
 
+        public Set<BlockPos> affectedBlocks() {
+            return affectedBlocks;
+        }
+
         public Long2ObjectOpenHashMap<LongArrayList> blocksByChunk() {
             return blocksByChunk;
         }
@@ -269,14 +281,22 @@ public final class FastExplosionEngine {
                 rayStrength -= (resistance + 0.3F) * RESISTANCE_STEP;
             }
 
-            // Vanilla records ray positions even when they are air. Air never needs a
-            // destruction write, so omitting it keeps the same resulting block changes
-            // while avoiding a large amount of memory and later no-op work.
-            if (rayStrength > 0.0F && !state.isAir()) {
-                long packed = BlockPos.asLong(x, y, z);
-                if (blocks.add(packed)) {
-                    long chunkKey = ChunkPos.asLong(x >> 4, z >> 4);
-                    blocksByChunk.computeIfAbsent(chunkKey, ignored -> new LongArrayList()).add(packed);
+            if (rayStrength > 0.0F) {
+                // Vanilla adds the position even when it is air. Do the same with the
+                // same HashSet implementation so the later shuffled order and RNG state
+                // match Explosion#finalizeExplosion exactly.
+                BlockPos affected = new BlockPos(x, y, z);
+                affectedBlocks.add(affected);
+
+                // Keep the non-air indexes as a secondary fast lookup used by metrics,
+                // light-boundary tests and existing diagnostics. Mutation order is NOT
+                // derived from these grouped indexes.
+                if (!state.isAir()) {
+                    long packed = affected.asLong();
+                    if (blocks.add(packed)) {
+                        long chunkKey = ChunkPos.asLong(x >> 4, z >> 4);
+                        blocksByChunk.computeIfAbsent(chunkKey, ignored -> new LongArrayList()).add(packed);
+                    }
                 }
             }
 
