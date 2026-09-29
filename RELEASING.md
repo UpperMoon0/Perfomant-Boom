@@ -39,7 +39,7 @@ Set the public project license to MIT, matching [LICENSE](LICENSE) and every loa
 ## API consumers
 
 `publishToMavenLocal` publishes the matching loader JARs, mapped common artifacts and the
-pure core for local consumers. Celestial Nail requires API version 1.1.0. Merge this API
-before merging the Nail dependency change. Cross-repository CI can override its Boom ref
-using `PERFOMANT_BOOM_REF`. Local consumers may need `--refresh-dependencies` after rebuilding
+pure core for local consumers. Integrations should pin the Boom version and source revision
+they test against. Their release ordering and CI configuration belong to those projects.
+Local consumers may need `--refresh-dependencies` after rebuilding
 the same version because Loom caches remapped mod dependencies.

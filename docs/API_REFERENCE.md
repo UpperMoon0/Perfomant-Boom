@@ -1,6 +1,6 @@
 # Explosion and terrain API reference
 
-For dependency snippets and integration examples, start with [INTEGRATION.md](../INTEGRATION.md). Pack authors and server operators should use [PACKMAKER.md](../PACKMAKER.md).
+For dependency snippets and integration examples, start with [INTEGRATION.md](../INTEGRATION.md). Pack authors and server operators should use [USAGE.md](../USAGE.md).
 
 ## Scheduled explosion API
 
@@ -26,7 +26,7 @@ Build with `./gradlew buildAll publishToMavenLocal`. Consumers use Maven group `
 | NeoForge 1.21.1 | `perfomant_boom-neoforge-1.21.1` |
 | NeoForge 26.1.2 | `perfomant_boom-neoforge-26.1.2` |
 
-Loom common consumers compile against `perfomant_boom-common` or `perfomant_boom-common-1.21.1`; platform modules still need their matching runtime artifact. Follow Nail's `modCompileOnly`/`modImplementation` setup for Loom or `implementation` setup for ModDevGradle. This repository currently documents local publication, not a hosted Maven endpoint.
+Loom common consumers compile against `perfomant_boom-common` or `perfomant_boom-common-1.21.1`; platform modules still need their matching runtime artifact. Use `modCompileOnly`/`modImplementation` for Loom or `implementation` for ModDevGradle, as shown in [INTEGRATION.md](../INTEGRATION.md). This repository currently documents local publication, not a hosted Maven endpoint.
 
 Declare a real loader dependency too. Do not shade the API or mixins into a consumer: duplicate classes split the shared scopes and work allowances. Refresh consumer caches after republishing an unchanged version.
 
@@ -51,7 +51,7 @@ See the signatures and readiness requirements in [TerrainPasses.java](../terrain
 4. Save the mutated sphere cursor or returned `nextIndex` after each slice. A yield caused by an exhausted budget, unavailable chunk or cancellation does not mean the traversal is done.
 5. Accumulate the boundary `changed` flag across every slice of a pass. Start another full pass if anything changed; finish after an unchanged complete pass. Persist both index and accumulated change state.
 6. Manage chunk ownership, release and transfer. Requesting a chunk does not transfer lifetime management to Boom.
-7. Own any settling delays, repeated fluid sweeps, entity damage, visual effects and network synchronization. Nail is the reference consumer for those policies.
+7. Own any settling delays, repeated fluid sweeps, entity damage, visual effects and network synchronization.
 
 The current shared terrain allowance is 3,000 changes, 45,000 scans, one chunk request and an eight-millisecond cooperative window per level/tick. It gates the next operation and cannot preempt a slow callback. These limits are distinct from the ordinary explosion scheduler's allowance.
 

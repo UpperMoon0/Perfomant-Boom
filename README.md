@@ -27,7 +27,7 @@ To choose a position explicitly:
 /execute positioned 100 80 100 run boom 4
 ```
 
-The success message means queued, not finished. Back up worlds before destructive operations. See [PACKMAKER.md](PACKMAKER.md) for command blocks, datapack functions and pack rollout checks.
+The success message means queued, not finished. Back up worlds before destructive operations. See [USAGE.md](USAGE.md) for command blocks, datapack functions and pack rollout checks.
 
 ## Installation
 
@@ -84,7 +84,7 @@ Runnable JARs are in each loader module's `build/libs`. Legacy `fabric` and `for
 
 ## Documentation and support
 
-- [Packmaker and server guide](PACKMAKER.md)
+- [Usage guide](USAGE.md)
 - [Integration guide](INTEGRATION.md) and [API reference](docs/API_REFERENCE.md)
 - [Architecture](docs/ARCHITECTURE.md), [source audit](docs/multiversion-audit.md) and [contributing](CONTRIBUTING.md)
 - [Testing](TESTING.md), [releasing](RELEASING.md) and [changelog](CHANGELOG.md)

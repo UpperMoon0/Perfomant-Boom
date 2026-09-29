@@ -20,7 +20,7 @@ To test a consumer, publish locally and build it against the matching version:
 ./gradlew publishToMavenLocal
 ```
 
-Celestial Nail's `boom_version` selects the dependency. After republishing the same version, refresh the consumer's dependencies before launching; stale remapped JARs can omit new API classes while displaying the expected version number.
+After republishing the same version, refresh the consumer's dependencies before launching; stale remapped JARs can omit new API classes while displaying the expected version number.
 
 ## Implementation rules
 

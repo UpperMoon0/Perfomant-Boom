@@ -15,7 +15,7 @@ Versioned release notes live in `changelog/`. Their presence describes planned/s
 
 ## 1.1.0
 
-[Full notes](changelog/1.1.0.md): Fabric/NeoForge 1.21.1, NeoForge 26.1.2, shared terrain API for Celestial Nail, and the five-target build/release matrix.
+[Full notes](changelog/1.1.0.md): Fabric/NeoForge 1.21.1, NeoForge 26.1.2, shared terrain API, and the five-target build/release matrix.
 
 ## 1.0.1
 

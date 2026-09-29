@@ -1,12 +1,12 @@
-# Packmaker and server guide
+# Usage guide
 
 Boom adds an administrative explosion command and a Java library for integrating mods. This guide covers packs, maps and servers; Java integrations belong in [INTEGRATION.md](INTEGRATION.md).
 
 ## Install the correct files
 
-Use the [installation matrix](README.md#installation) to match the exact game version and loader. Include Boom's required mods and the dependencies of each consumer. Celestial Nail requires matching Boom 1.1.0 and adds Architectury API on Fabric 1.21.1, even though Boom itself does not require Architectury on that target.
+Use the [installation matrix](README.md#installation) to match the exact game version and loader. Include Boom's required mods and the dependencies of each consumer.
 
-Install Boom alongside the consumer. For Nail packs, install both on server and clients. Do not assume vanilla clients are a tested configuration. Boom's CurseForge project ID is `1718134`; use a real published file for your target when constructing a pack manifest, not a guessed file ID.
+Install Boom alongside the consumer. Follow the integrating mod's client/server installation requirements. Do not assume vanilla clients are a tested configuration. Boom's CurseForge project ID is `1718134`; use a real published file for your target when constructing a pack manifest, not a guessed file ID.
 
 Boom is MIT-licensed; retain its copyright and license notice when redistributing it. Other included mods have their own licenses.
 
@@ -30,7 +30,7 @@ Command blocks use their command source position unless `execute positioned` cha
 
 ## What installing Boom changes
 
-Only `/boom` and mods explicitly calling Boom use its engine. Installing it does not reroute vanilla TNT, creepers or arbitrary modded explosions. It does not add Nail's monument or animations.
+Only `/boom` and mods explicitly calling Boom use its engine. Installing it does not reroute vanilla TNT, creepers or arbitrary modded explosions.
 
 There is no dedicated KubeJS/CraftTweaker integration or pack-facing scheduler configuration in this release. Commands can be invoked through Minecraft's command system; Java terrain calls require a mod integration. Work budgets are implementation constants, not settings in a generated config file.
 
@@ -38,7 +38,7 @@ There is no dedicated KubeJS/CraftTweaker integration or pack-facing scheduler c
 
 Scheduled explosions can damage entities and alter terrain over multiple ticks. General vanilla explosion loot is not reproduced; arbitrary modded explosion/protection hooks are not guaranteed. Test the actual claim and block mods in your pack. Boom is not a protection system.
 
-Consumers such as Nail use a separate administrative no-drop terrain path. It clears blocks and vanilla container contents without drops, suppresses selected cascades and repairs the immediate boundary in bounded passes. Outside fluids can flow back. Consumer commands, permissions, visuals and restart handling belong to that consumer.
+The terrain API provides a separate administrative no-drop path. It clears blocks and vanilla container contents without drops, suppresses selected cascades and repairs the immediate boundary in bounded passes. Outside fluids can flow back. Consumer commands, permissions, visuals and restart handling belong to that consumer.
 
 Normal saves retain committed changes. Unfinished ordinary explosions are not serialized for restart, which may leave a partially completed crater. Removing the mod or restarting is not an undo. Keep world backups for restoration.
 

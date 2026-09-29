@@ -1,6 +1,6 @@
 # Perfomant Boom
 
-Large explosions, scheduled across server ticks—and a shared terrain engine for mods such as Celestial Nail.
+Large explosions, scheduled across server ticks—and a shared terrain engine for mod integrations.
 
 **Perfomant Boom** provides an administrator explosion command and reusable terrain operations. Its scheduler spreads calculation and block changes across ticks to avoid doing the entire scheduled explosion in one burst.
 
@@ -9,7 +9,7 @@ Large explosions, scheduled across server ticks—and a shared terrain engine fo
 - Queue explosions with the operator command `/boom <power>`.
 - Spread explosion work across server ticks while keeping live-world access on the server thread.
 - Support terrain clearing, fluid cleanup, and boundary repair for mods that use the shared API.
-- Use it alongside **Celestial Nail**, which supplies its own monument, animations, damage, and strike sequence.
+- Integrate the Java API into your own mod while retaining control of effects, damage, timing and saved progress.
 
 ## Try it
 
@@ -35,7 +35,7 @@ Choose the file matching your exact Minecraft version and loader.
 | 1.21.1 | NeoForge | None | 21 |
 | 26.1.2 | NeoForge | None | 25 |
 
-Fabric targets require Fabric Loader **0.18.4 or newer**. When using Celestial Nail, install the matching Boom version on both server and clients, together with Nail's own dependencies. Celestial Nail is not required to use Boom's command.
+Fabric targets require Fabric Loader **0.18.4 or newer**. For integrations, follow the consuming mod's client/server requirements and install its additional dependencies. Boom's command works independently.
 
 ## What to expect
 
@@ -43,7 +43,7 @@ Ordinary TNT, creeper, and other Minecraft explosions are **not automatically re
 
 This is not a promise of lag-free explosions or a universal speed multiplier. Chunk loading, lighting, and block callbacks can still take time. General vanilla explosion loot behavior is not reproduced, and custom explosion hooks or protection mods may behave differently. Use backups before destructive commands; Boom is not a protection system.
 
-Queued ordinary Boom explosions are not resumed after a server restart. Completed block changes persist through normal saves. Integrations such as Nail manage their own saved progress separately.
+Queued ordinary Boom explosions are not resumed after a server restart. Completed block changes persist through normal saves. Integrations manage their own saved progress separately.
 
 ## Help and feedback
 
