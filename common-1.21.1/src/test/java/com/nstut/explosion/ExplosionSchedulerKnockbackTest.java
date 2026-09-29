@@ -27,18 +27,22 @@ class ExplosionSchedulerKnockbackTest {
     }
 
     @Test void sendsHitImpulseBeforeYieldEvenIfPlayerLaterLeavesRange() {
-        checkYieldedExplosion(true, false);
+        checkYieldedExplosion(true, false, false);
     }
 
     @Test void doesNotRepeatHitEffectsForPlayerStillInRange() {
-        checkYieldedExplosion(false, false);
+        checkYieldedExplosion(false, false, false);
     }
 
     @Test void freezesObserversAcrossRangeCrossingsAndLevelArrivals() {
-        checkYieldedExplosion(false, true);
+        checkYieldedExplosion(false, true, false);
     }
 
-    private void checkYieldedExplosion(boolean leavesRange, boolean observersMove) {
+    @Test void skipsObserverWhoChangesDimensionDuringYield() {
+        checkYieldedExplosion(false, false, true);
+    }
+
+    private void checkYieldedExplosion(boolean leavesRange, boolean observersMove, boolean changesDimension) {
         var server = mock(MinecraftServer.class);
         var level = mock(ServerLevel.class, RETURNS_DEEP_STUBS);
         when(level.getServer()).thenReturn(server);
@@ -66,6 +70,8 @@ class ExplosionSchedulerKnockbackTest {
         when(arrival.distanceToSqr(Vec3.ZERO)).thenReturn(100D);
         var levelPlayers = new java.util.ArrayList<>(List.of(player, observer, outside));
         when(level.players()).thenReturn(levelPlayers);
+        for (var recipient : List.of(player, observer, outside, arrival))
+            when(recipient.level()).thenReturn(level);
         when(level.getEntities(isNull(), any(AABB.class))).thenReturn(List.of(player, mob));
         var calculation = mock(FastExplosionEngine.IncrementalCalculation.class);
         when(calculation.processUntil(anyLong())).thenReturn(true);
@@ -98,17 +104,23 @@ class ExplosionSchedulerKnockbackTest {
                 when(outside.distanceToSqr(Vec3.ZERO)).thenReturn(100D);
                 levelPlayers.add(arrival);
             }
+            if (changesDimension)
+                when(observer.level()).thenReturn(mock(ServerLevel.class));
             ExplosionScheduler.tickUntil(server, Long.MIN_VALUE);
             verify(mob).ignoreExplosion(explosion);
             assertFalse(completed.get());
             ExplosionScheduler.tickUntil(server, Long.MAX_VALUE);
             assertTrue(completed.get());
             verifyNoMoreInteractions(player.connection);
-            verify(observer.connection).send(packets.capture());
-            assertEquals(0F, packets.getValue().getKnockbackX());
-            assertEquals(0F, packets.getValue().getKnockbackY());
-            assertEquals(0F, packets.getValue().getKnockbackZ());
-            verifyNoMoreInteractions(observer.connection);
+            if (changesDimension) {
+                verifyNoInteractions(observer.connection);
+            } else {
+                verify(observer.connection).send(packets.capture());
+                assertEquals(0F, packets.getValue().getKnockbackX());
+                assertEquals(0F, packets.getValue().getKnockbackY());
+                assertEquals(0F, packets.getValue().getKnockbackZ());
+                verifyNoMoreInteractions(observer.connection);
+            }
             verifyNoInteractions(outside.connection, arrival.connection);
         }
     }

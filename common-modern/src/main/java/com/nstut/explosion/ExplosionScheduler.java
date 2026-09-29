@@ -117,7 +117,7 @@ public final class ExplosionScheduler {
                 damaged=true; entities=null;
                 order=new ObjectArrayList<>(calculation.affectedBlocks());
                 VanillaExplosionAdapter.shuffle(order, level.getRandom());
-                VanillaExplosionAdapter.sendEffects(effectRecipients, center, power, effectsSent);
+                VanillaExplosionAdapter.sendEffects(level, effectRecipients, center, power, effectsSent);
                 effectRecipients=null;
                 effectsSent.clear();
             }

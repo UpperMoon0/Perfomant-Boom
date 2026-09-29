@@ -24,14 +24,14 @@ class VanillaExplosionAdapterTest {
         var level = mock(ServerLevel.class);
         var moving = player(4);
         var observer = player(100);
-        var outside = player(4096);
-        when(level.players()).thenReturn(List.of(moving, observer, outside));
+        when(moving.level()).thenReturn(level);
+        when(observer.level()).thenReturn(level);
         Vec3 velocity = new Vec3(0.75, 0.1, -0.5);
         when(moving.getDeltaMovement()).thenReturn(velocity);
         Vec3 impulse = new Vec3(0.25, 0.5, -0.125);
 
         moving.connection.send(VanillaExplosionAdapter.clientPacket(Vec3.ZERO, 4, impulse));
-        VanillaExplosionAdapter.sendEffects(List.of(moving, observer), Vec3.ZERO, 4, java.util.Set.of(moving));
+        VanillaExplosionAdapter.sendEffects(level, List.of(moving, observer), Vec3.ZERO, 4, java.util.Set.of(moving));
 
         var packet = ArgumentCaptor.forClass(ClientboundExplodePacket.class);
         verify(moving.connection, times(1)).send(packet.capture());
@@ -46,7 +46,6 @@ class VanillaExplosionAdapterTest {
         assertEquals(0, packet.getValue().getKnockbackY());
         assertEquals(0, packet.getValue().getKnockbackZ());
         verifyNoMoreInteractions(moving.connection, observer.connection);
-        verifyNoInteractions(outside.connection);
     }
 
     private static ServerPlayer player(double distanceSquared) {
