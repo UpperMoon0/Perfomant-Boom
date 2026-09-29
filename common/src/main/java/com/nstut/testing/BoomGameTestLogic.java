@@ -19,8 +19,9 @@ public final class BoomGameTestLogic {
         BlockPos localControl = localCenter.offset(4, 4, 4);
         BlockPos center = helper.absolutePos(localCenter);
         BlockPos chest = helper.absolutePos(localChest);
-        BlockPos control = helper.absolutePos(localControl);
         BlockPos vanillaLightControl = center.offset(16, 0, 0);
+        var removalLightReady = GameTestLightAwaiter.once(
+            () -> awaitLight(helper, center, vanillaLightControl, 0));
 
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         for (int x = -4; x <= 4; x++) {
@@ -48,6 +49,13 @@ public final class BoomGameTestLogic {
         helper.getLevel().setBlock(vanillaLightControl, Blocks.GLOWSTONE.defaultBlockState(), 3);
 
         helper.runAfterDelay(20, () -> {
+            // GameTestServer runs ticks without the dedicated server's 50 ms pacing.
+            // Its tick timeout is not a deadline for the asynchronous light worker.
+            // Observe the queued vanilla work; do not repair it with lightChunk/checkBlock.
+            if (!awaitLight(helper, center, vanillaLightControl, 15)) {
+                helper.fail("fixture glowstone light did not initialize before the wall-clock deadline");
+                return;
+            }
             System.out.println(
                 "PERFOMANT_BOOM_GAMETEST_VANILLA_LIGHT_BEFORE_REMOVE brightness="
                     + helper.getLevel().getBrightness(LightLayer.BLOCK, vanillaLightControl)
@@ -81,6 +89,12 @@ public final class BoomGameTestLogic {
                 helper.fail("removed chest block entity still registered");
                 return;
             }
+            if (!removalLightReady.getAsBoolean()) {
+                helper.fail("queued removal lighting did not converge before the wall-clock deadline: vanilla="
+                    + helper.getLevel().getBrightness(LightLayer.BLOCK, vanillaLightControl)
+                    + " fast=" + helper.getLevel().getBrightness(LightLayer.BLOCK, center));
+                return;
+            }
             int vanillaControlLight = helper.getLevel().getBrightness(LightLayer.BLOCK, vanillaLightControl);
             if (vanillaControlLight != 0) {
                 throw new GameTestAssertException(
@@ -101,5 +115,17 @@ public final class BoomGameTestLogic {
                 throw new GameTestAssertException("removed glowstone light has not settled: " + fastLight);
             }
         });
+    }
+
+    private static boolean awaitLight(GameTestHelper helper, BlockPos fast, BlockPos control, int expected) {
+        var level = helper.getLevel();
+        return GameTestLightAwaiter.await(
+            level.getServer()::managedBlock,
+            level.getChunkSource().getLightEngine()::tryScheduleUpdate,
+            () -> level.getBrightness(LightLayer.BLOCK, fast) == expected
+                && level.getBrightness(LightLayer.BLOCK, control) == expected,
+            System::nanoTime,
+            java.util.concurrent.TimeUnit.SECONDS.toNanos(30)
+        );
     }
 }
