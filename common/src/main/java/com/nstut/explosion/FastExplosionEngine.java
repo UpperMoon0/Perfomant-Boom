@@ -40,7 +40,7 @@ public final class FastExplosionEngine {
             new ServerWorldView(level),
             center,
             power,
-            level.getRandom()
+            RandomSource.create()
         );
     }
 
@@ -175,7 +175,7 @@ public final class FastExplosionEngine {
          * Processes work until the supplied deadline. Returns true when calculation is complete.
          */
         public boolean processUntil(long deadlineNanos) {
-            int checksUntilDeadline = 256;
+            int checksUntilDeadline = 32;
 
             while (rayActive || nextRayIndex < RAY_DIRECTIONS.length) {
                 if (!rayActive) {
@@ -186,7 +186,7 @@ public final class FastExplosionEngine {
                 sampleCount++;
 
                 if (--checksUntilDeadline == 0) {
-                    checksUntilDeadline = 256;
+                    checksUntilDeadline = 32;
                     if (System.nanoTime() >= deadlineNanos) {
                         return false;
                     }

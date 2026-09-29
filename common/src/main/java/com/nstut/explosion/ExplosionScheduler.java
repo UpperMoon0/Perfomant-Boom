@@ -31,6 +31,7 @@ import net.minecraft.world.phys.Vec3;
 import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Queue;
+import java.util.function.Consumer;
 
 /**
  * Time-slices explosion calculation and block mutation so large explosions do not
@@ -50,8 +51,30 @@ public final class ExplosionScheduler {
     private ExplosionScheduler() {
     }
 
+    public record ExplosionMetrics(
+        int changedBlocks,
+        long raySamples,
+        double cpuMs,
+        double maxSliceMs,
+        int workPasses,
+        double wallMs
+    ) {
+    }
+
     public static void schedule(ServerLevel level, Vec3 center, float power) {
-        TASK_QUEUE.add(new ExplosionTask(level, center, power));
+        scheduleTracked(level, center, power, null);
+    }
+
+    public static void scheduleTracked(
+        ServerLevel level,
+        Vec3 center,
+        float power,
+        Consumer<ExplosionMetrics> completion
+    ) {
+        long start = System.nanoTime();
+        ExplosionTask task = new ExplosionTask(level, center, power, completion);
+        task.cpuNanos += System.nanoTime() - start;
+        TASK_QUEUE.add(task);
     }
 
     public static void tick(MinecraftServer server) {
@@ -76,10 +99,14 @@ public final class ExplosionScheduler {
                 continue;
             }
 
-            if (!task.processUntil(deadline)) {
+            long sliceStart = System.nanoTime();
+            boolean finished = task.processUntil(deadline);
+            task.recordSlice(System.nanoTime() - sliceStart);
+            if (!finished) {
                 return;
             }
 
+            task.notifyCompletion();
             TASK_QUEUE.poll();
             if (System.nanoTime() >= deadline) {
                 return;
@@ -96,6 +123,7 @@ public final class ExplosionScheduler {
         private final Vec3 center;
         private final float power;
         private final FastExplosionEngine.IncrementalCalculation calculation;
+        private final Consumer<ExplosionMetrics> completion;
         private final LongOpenHashSet queuedLightChecks = new LongOpenHashSet();
         private final Long2ObjectOpenHashMap<BlockState> boundaryNeighborUpdates = new Long2ObjectOpenHashMap<>();
         private final long createdNanos = System.nanoTime();
@@ -118,12 +146,29 @@ public final class ExplosionScheduler {
         private int nextEntityIndex;
         private boolean entityDamageFinished;
         private Explosion blockCallbackExplosion;
+        private long cpuNanos;
+        private long maxSliceNanos;
+        private int workPasses;
+        private double finishedWallMs;
+        private boolean completionNotified;
 
-        private ExplosionTask(ServerLevel level, Vec3 center, float power) {
+        private ExplosionTask(
+            ServerLevel level,
+            Vec3 center,
+            float power,
+            Consumer<ExplosionMetrics> completion
+        ) {
             this.level = level;
             this.center = center;
             this.power = power;
+            this.completion = completion;
             this.calculation = FastExplosionEngine.create(level, center, power);
+        }
+
+        private void recordSlice(long elapsedNanos) {
+            cpuNanos += elapsedNanos;
+            maxSliceNanos = Math.max(maxSliceNanos, elapsedNanos);
+            workPasses++;
         }
 
         private boolean isValidFor(MinecraftServer server) {
@@ -166,7 +211,11 @@ public final class ExplosionScheduler {
                 }
             }
 
-            int checksUntilDeadline = 256;
+            if (postUpdatesStarted) {
+                return processPostUpdates(deadlineNanos);
+            }
+
+            int checksUntilDeadline = 8;
             while (true) {
                 if (currentBlocks == null) {
                     if (!chunkIterator.hasNext()) {
@@ -182,7 +231,7 @@ public final class ExplosionScheduler {
                     }
 
                     if (--checksUntilDeadline == 0) {
-                        checksUntilDeadline = 256;
+                        checksUntilDeadline = 8;
                         if (System.nanoTime() >= deadlineNanos) {
                             return false;
                         }
@@ -389,14 +438,14 @@ public final class ExplosionScheduler {
                 neighborUpdateIterator = boundaryNeighborUpdates.long2ObjectEntrySet().fastIterator();
             }
 
-            int checksUntilDeadline = 256;
+            int checksUntilDeadline = 8;
             while (lightCheckIterator.hasNext()) {
                 long packed = lightCheckIterator.nextLong();
                 lightCheckPos.set(BlockPos.getX(packed), BlockPos.getY(packed), BlockPos.getZ(packed));
                 level.getLightEngine().checkBlock(lightCheckPos);
 
                 if (--checksUntilDeadline == 0) {
-                    checksUntilDeadline = 256;
+                    checksUntilDeadline = 8;
                     if (System.nanoTime() >= deadlineNanos) {
                         return false;
                     }
@@ -420,7 +469,7 @@ public final class ExplosionScheduler {
                 Blocks.AIR.defaultBlockState().updateIndirectNeighbourShapes(level, mutablePos, 2, 511);
 
                 if (--checksUntilDeadline == 0) {
-                    checksUntilDeadline = 256;
+                    checksUntilDeadline = 8;
                     if (System.nanoTime() >= deadlineNanos) {
                         return false;
                     }
@@ -445,14 +494,36 @@ public final class ExplosionScheduler {
         }
 
         private void finishTask() {
-            double elapsedMs = (System.nanoTime() - createdNanos) / 1_000_000.0D;
+            finishedWallMs = (System.nanoTime() - createdNanos) / 1_000_000.0D;
+        }
+
+        private void notifyCompletion() {
+            if (completionNotified) {
+                return;
+            }
+            completionNotified = true;
+
+            double cpuMs = cpuNanos / 1_000_000.0D;
+            double maxSliceMs = maxSliceNanos / 1_000_000.0D;
             ExampleMod.LOGGER.info(
-                "Explosion finished: {} blocks changed at {} (power {}) in {}ms wall-clock",
+                "Explosion finished: {} blocks changed at {} (power {}) in {}ms wall-clock, {}ms CPU, max {}ms/tick",
                 actualChangedBlocks,
                 center,
                 power,
-                String.format("%.2f", elapsedMs)
+                String.format("%.2f", finishedWallMs),
+                String.format("%.2f", cpuMs),
+                String.format("%.2f", maxSliceMs)
             );
+            if (completion != null) {
+                completion.accept(new ExplosionMetrics(
+                    actualChangedBlocks,
+                    calculation.sampleCount(),
+                    cpuMs,
+                    maxSliceMs,
+                    workPasses,
+                    finishedWallMs
+                ));
+            }
         }
     }
 }

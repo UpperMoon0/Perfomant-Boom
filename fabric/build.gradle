@@ -2,6 +2,24 @@ plugins {
     id 'com.gradleup.shadow'
 }
 
+loom {
+    runs {
+        liveBoomTestClient {
+            client()
+            runDir("run/live-boom/${System.getenv('PERFOMANT_BOOM_TEST_RUN') ?: 'default'}/client")
+            vmArg "-Xmx2G"
+            property "perfomant_boom.liveTest", "true"
+            programArgs "--quickPlayMultiplayer", "127.0.0.1:${System.getenv('PERFOMANT_BOOM_TEST_PORT') ?: '25585'}"
+        }
+        liveBoomTestServer {
+            server()
+            runDir("run/live-boom/${System.getenv('PERFOMANT_BOOM_TEST_RUN') ?: 'default'}/server")
+            vmArg "-Xmx2G"
+            property "perfomant_boom.liveTest", "true"
+        }
+    }
+}
+
 architectury {
     platformSetupLoomIde()
     fabric()

@@ -2,6 +2,32 @@ plugins {
     id 'com.gradleup.shadow'
 }
 
+loom {
+    forge {
+        runs {
+            liveBoomTestClient {
+                client()
+                runDir("run/live-boom/${System.getenv('PERFOMANT_BOOM_TEST_RUN') ?: 'default'}/client")
+                vmArg "-Xmx1280m"
+                property "perfomant_boom.liveTest", "true"
+                programArgs "--quickPlayMultiplayer", "127.0.0.1:${System.getenv('PERFOMANT_BOOM_TEST_PORT') ?: '25585'}"
+            }
+            liveBoomTestServer {
+                server()
+                runDir("run/live-boom/${System.getenv('PERFOMANT_BOOM_TEST_RUN') ?: 'default'}/server")
+                vmArg "-Xmx1280m"
+                property "perfomant_boom.liveTest", "true"
+            }
+            boomGameTestServer {
+                environment("gametestserver")
+                forgeTemplate("gameTestServer")
+                runDir("run/game-test")
+                property "forge.enabledGameTestNamespaces", "perfomant_boom,minecraft"
+            }
+        }
+    }
+}
+
 architectury {
     platformSetupLoomIde()
     forge()
@@ -49,4 +75,13 @@ shadowJar {
 
 remapJar {
     inputFile.set shadowJar.archiveFile
+}
+
+tasks.matching { it.name == 'runBoomGameTestServer' }.configureEach {
+    doFirst {
+        project.copy {
+            from rootProject.file('common/src/gametest/resources/gameteststructures')
+            into project.file('run/game-test/gameteststructures')
+        }
+    }
 }

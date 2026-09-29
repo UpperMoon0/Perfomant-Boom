@@ -2,6 +2,7 @@ package com.nstut;
 
 import com.mojang.brigadier.arguments.FloatArgumentType;
 import com.nstut.explosion.ExplosionScheduler;
+import com.nstut.testing.BoomServerIntegrationTest;
 import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
@@ -20,11 +21,25 @@ public final class ExampleMod {
     public static void init() {
     }
 
+    public static void onServerTickStart(MinecraftServer server) {
+        BoomServerIntegrationTest.onServerTickStart(server);
+    }
+
     public static void onServerTick(MinecraftServer server) {
         ExplosionScheduler.tick(server);
+        BoomServerIntegrationTest.tick(server);
     }
 
     public static void registerCommands(com.mojang.brigadier.CommandDispatcher<net.minecraft.commands.CommandSourceStack> dispatcher) {
+        if (BoomServerIntegrationTest.isArmed()) {
+            dispatcher.register(Commands.literal("perfomant_boom_live_ready")
+                .executes(context -> {
+                    BoomServerIntegrationTest.markClientReady();
+                    return 1;
+                })
+            );
+        }
+
         dispatcher.register(Commands.literal("boom")
             .requires(source -> source.hasPermission(2))
             .then(Commands.argument("radius", FloatArgumentType.floatArg(1.0f, 500.0f))

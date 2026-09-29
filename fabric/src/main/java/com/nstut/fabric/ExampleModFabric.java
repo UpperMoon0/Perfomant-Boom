@@ -10,7 +10,8 @@ public final class ExampleModFabric implements ModInitializer {
         // Run our common setup.
         ExampleMod.init();
 
-        // Register server tick event - Fabric passes MinecraftServer
+        // Register server tick events so live verification can measure whole-tick latency.
+        ServerTickEvents.START_SERVER_TICK.register(ExampleMod::onServerTickStart);
         ServerTickEvents.END_SERVER_TICK.register(ExampleMod::onServerTick);
 
         // Register commands
