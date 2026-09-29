@@ -20,7 +20,7 @@ class VanillaExplosionAdapterTest {
         Bootstrap.bootStrap();
     }
 
-    @Test void sendsImpulseOnceToMovingPlayerAndEffectsToObserverOnlyWithinRange() {
+    @Test void sendsImpulseOnceToMovingPlayerAndEffectsToSelectedObserver() {
         var level = mock(ServerLevel.class);
         var moving = player(4);
         var observer = player(100);
@@ -31,7 +31,7 @@ class VanillaExplosionAdapterTest {
         Vec3 impulse = new Vec3(0.25, 0.5, -0.125);
 
         moving.connection.send(VanillaExplosionAdapter.clientPacket(Vec3.ZERO, 4, impulse));
-        VanillaExplosionAdapter.sendEffects(level, Vec3.ZERO, 4, java.util.Set.of(moving));
+        VanillaExplosionAdapter.sendEffects(List.of(moving, observer), Vec3.ZERO, 4, java.util.Set.of(moving));
 
         var packet = ArgumentCaptor.forClass(ClientboundExplodePacket.class);
         verify(moving.connection, times(1)).send(packet.capture());

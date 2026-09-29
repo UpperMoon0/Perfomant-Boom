@@ -67,6 +67,7 @@ public final class ExplosionScheduler {
         FastExplosionEngine.IncrementalCalculation calculation;
         ObjectArrayList<BlockPos> order;
         List<Entity> entities;
+        List<net.minecraft.server.level.ServerPlayer> effectRecipients;
         final java.util.Map<net.minecraft.server.level.ServerPlayer, Vec3> hitPlayers = new java.util.HashMap<>();
         final java.util.Set<net.minecraft.server.level.ServerPlayer> effectsSent = new java.util.HashSet<>();
         boolean started, calculated, damaged;
@@ -89,6 +90,9 @@ public final class ExplosionScheduler {
             if (!calculated) {
                 if (!calculation.processUntil(deadline)) return false;
                 calculated=true;
+                // Freeze observers before entity callbacks or yields can change proximity/membership.
+                effectRecipients = level.players().stream()
+                        .filter(player -> player.distanceToSqr(center) < 4096.0).toList();
                 float diameter=power*2;
                 entities=level.getEntities(null, new AABB(Mth.floor(center.x-diameter-1),
                         Mth.floor(center.y-diameter-1), Mth.floor(center.z-diameter-1),
@@ -113,7 +117,8 @@ public final class ExplosionScheduler {
                 damaged=true; entities=null;
                 order=new ObjectArrayList<>(calculation.affectedBlocks());
                 VanillaExplosionAdapter.shuffle(order, level.getRandom());
-                VanillaExplosionAdapter.sendEffects(level, center, power, effectsSent);
+                VanillaExplosionAdapter.sendEffects(effectRecipients, center, power, effectsSent);
+                effectRecipients=null;
                 effectsSent.clear();
             }
             while (blockIndex < order.size()) {

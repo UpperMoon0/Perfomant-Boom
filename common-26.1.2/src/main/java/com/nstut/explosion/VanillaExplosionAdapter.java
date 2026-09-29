@@ -51,9 +51,9 @@ final class VanillaExplosionAdapter {
                 power < 2 ? net.minecraft.core.particles.ParticleTypes.EXPLOSION : net.minecraft.core.particles.ParticleTypes.EXPLOSION_EMITTER,
                 net.minecraft.sounds.SoundEvents.GENERIC_EXPLODE, net.minecraft.util.random.WeightedList.of());
     }
-    static void sendEffects(ServerLevel level, Vec3 center, float power, java.util.Set<ServerPlayer> effectsSent) {
-        for (ServerPlayer player : level.players()) {
-            if (!effectsSent.contains(player) && player.distanceToSqr(center) < 4096.0)
+    static void sendEffects(List<ServerPlayer> recipients, Vec3 center, float power, java.util.Set<ServerPlayer> effectsSent) {
+        for (ServerPlayer player : recipients) {
+            if (!effectsSent.contains(player))
                 player.connection.send(clientPacket(center, power, null));
         }
     }

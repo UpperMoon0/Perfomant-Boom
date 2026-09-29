@@ -27,14 +27,18 @@ class ExplosionSchedulerKnockbackTest {
     }
 
     @Test void sendsHitImpulseBeforeYieldEvenIfPlayerLaterLeavesRange() {
-        checkYieldedExplosion(true);
+        checkYieldedExplosion(true, false);
     }
 
     @Test void doesNotRepeatHitEffectsForPlayerStillInRange() {
-        checkYieldedExplosion(false);
+        checkYieldedExplosion(false, false);
     }
 
-    private void checkYieldedExplosion(boolean leavesRange) {
+    @Test void freezesObserversAcrossRangeCrossingsAndLevelArrivals() {
+        checkYieldedExplosion(false, true);
+    }
+
+    private void checkYieldedExplosion(boolean leavesRange, boolean observersMove) {
         var server = mock(MinecraftServer.class);
         var level = mock(ServerLevel.class, RETURNS_DEEP_STUBS);
         when(level.getServer()).thenReturn(server);
@@ -53,8 +57,15 @@ class ExplosionSchedulerKnockbackTest {
         when(mob.ignoreExplosion(explosion)).thenReturn(true);
         var observer = mock(ServerPlayer.class);
         observer.connection = mock(ServerGamePacketListenerImpl.class);
-        when(observer.distanceToSqr(Vec3.ZERO)).thenReturn(100D);
-        when(level.players()).thenReturn(List.of(player, observer));
+        when(observer.distanceToSqr(Vec3.ZERO)).thenReturn(2500D);
+        var outside = mock(ServerPlayer.class);
+        outside.connection = mock(ServerGamePacketListenerImpl.class);
+        when(outside.distanceToSqr(Vec3.ZERO)).thenReturn(4096D);
+        var arrival = mock(ServerPlayer.class);
+        arrival.connection = mock(ServerGamePacketListenerImpl.class);
+        when(arrival.distanceToSqr(Vec3.ZERO)).thenReturn(100D);
+        var levelPlayers = new java.util.ArrayList<>(List.of(player, observer, outside));
+        when(level.players()).thenReturn(levelPlayers);
         when(level.getEntities(isNull(), any(AABB.class))).thenReturn(List.of(player, mob));
         var calculation = mock(FastExplosionEngine.IncrementalCalculation.class);
         when(calculation.processUntil(anyLong())).thenReturn(true);
@@ -82,6 +93,11 @@ class ExplosionSchedulerKnockbackTest {
 
             // Moving out of range while the task is suspended cannot lose the earlier impulse.
             when(player.distanceToSqr(Vec3.ZERO)).thenReturn(leavesRange ? 10000D : 4D);
+            if (observersMove) {
+                when(observer.distanceToSqr(Vec3.ZERO)).thenReturn(10000D);
+                when(outside.distanceToSqr(Vec3.ZERO)).thenReturn(100D);
+                levelPlayers.add(arrival);
+            }
             ExplosionScheduler.tickUntil(server, Long.MIN_VALUE);
             verify(mob).ignoreExplosion(explosion);
             assertFalse(completed.get());
@@ -93,6 +109,7 @@ class ExplosionSchedulerKnockbackTest {
             assertEquals(0F, packets.getValue().getKnockbackY());
             assertEquals(0F, packets.getValue().getKnockbackZ());
             verifyNoMoreInteractions(observer.connection);
+            verifyNoInteractions(outside.connection, arrival.connection);
         }
     }
 }
