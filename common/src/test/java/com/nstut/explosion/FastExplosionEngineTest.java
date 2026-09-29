@@ -29,7 +29,7 @@ class FastExplosionEngineTest {
     }
 
     @Test
-    void queuedExplosionsDoNotReserveLaterRayRngBeforeActiveShuffle() throws Exception {
+    void queuedExplosionsReserveOnlyTheActiveHeadsRayRng() throws Exception {
         var level = org.mockito.Mockito.mock(net.minecraft.server.level.ServerLevel.class);
         var actual = RandomSource.create(0x51A77E5EEDL);
         var expected = RandomSource.create(0x51A77E5EEDL);
@@ -46,12 +46,14 @@ class FastExplosionEngineTest {
         serverField.set(null, null);
         try {
             ExplosionScheduler.scheduleTracked(level, new Vec3(0.5D, 96.5D, 0.5D), 10.0F, null);
+            for (int i = 0; i < 1352; i++) expected.nextFloat();
+
             ExplosionScheduler.scheduleTracked(level, new Vec3(32.5D, 96.5D, 0.5D), 6.0F, null);
 
             assertEquals(2, queue.size());
-            org.mockito.Mockito.verify(level, org.mockito.Mockito.never()).getRandom();
+            org.mockito.Mockito.verify(level, org.mockito.Mockito.times(1)).getRandom();
             assertEquals(expected.nextLong(), actual.nextLong(),
-                "enqueuing later explosions must not consume Level.random before the active task runs");
+                "only the active head may reserve ray RNG; a later queued task must wait");
         } finally {
             queue.clear();
             serverField.set(null, null);

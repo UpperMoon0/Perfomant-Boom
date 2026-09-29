@@ -75,7 +75,14 @@ public final class ExplosionScheduler {
         Consumer<ExplosionMetrics> completion
     ) {
         long start = System.nanoTime();
+        boolean becomesActiveHead = TASK_QUEUE.isEmpty();
         ExplosionTask task = new ExplosionTask(level, center, power, completion);
+        // Match a direct vanilla invocation when no explosion is already pending:
+        // reserve this task's 1,352 ray-strength draws at the scheduling call site.
+        // Only later queued tasks defer reservation until they reach the queue head.
+        if (becomesActiveHead) {
+            task.initializeCalculation();
+        }
         task.workNanos += System.nanoTime() - start;
         TASK_QUEUE.add(task);
     }
@@ -243,9 +250,9 @@ public final class ExplosionScheduler {
             if (!started) {
                 started = true;
                 beginExplosionEffects();
-                // Scheduling is intentionally RNG-free. Only the active queue head may
-                // reserve ray strengths, so later explosions cannot interleave their
-                // level-RNG draws before this task's vanilla affected-position shuffle.
+                // The first task normally reserved its rays at schedule time. A task
+                // that was queued behind another explosion defers that reservation until
+                // it becomes active, after the previous task has reached its shuffle.
                 initializeCalculation();
             }
 
