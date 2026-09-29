@@ -1,9 +1,10 @@
 package com.nstut.explosion;
 import java.util.List;
+import java.util.Map;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
+import net.minecraft.network.protocol.game.ClientboundExplodePacket;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
@@ -21,7 +22,7 @@ final class VanillaExplosionAdapter {
         return new Explosion(level, null, center.x, center.y, center.z, power, false, Explosion.BlockInteraction.DESTROY);
     }
     static void shuffle(List<BlockPos> order, RandomSource random) { net.minecraft.Util.shuffle(order, random); }
-    static void hurt(ServerLevel level, Explosion explosion, Entity entity) {
+    static void hurt(ServerLevel level, Explosion explosion, Entity entity, Map<ServerPlayer, Vec3> hitPlayers) {
         if (entity.ignoreExplosion(explosion)) return;
         Vec3 center=explosion.center();
         double distance=Math.sqrt(entity.distanceToSqr(center))/(explosion.radius()*2.0F);
@@ -39,9 +40,22 @@ final class VanillaExplosionAdapter {
                 ? living.getAttributeValue(Attributes.EXPLOSION_KNOCKBACK_RESISTANCE) : 0;
         Vec3 knockback=direction.scale((1-distance)*exposure*DAMAGE.getKnockbackMultiplier(entity)*(1-resistance));
         entity.setDeltaMovement(entity.getDeltaMovement().add(knockback));
-        if (entity instanceof ServerPlayer player && player.distanceToSqr(center)<4096
+        if (entity instanceof ServerPlayer player
                 && !player.isSpectator() && (!player.isCreative() || !player.getAbilities().flying))
-            player.connection.send(new ClientboundSetEntityMotionPacket(player));
+            hitPlayers.put(player, knockback);
         entity.onExplosionHit(null);
+    }
+
+    // Terrain updates remain server-driven and time-sliced: never replay the crater on the client.
+    static ClientboundExplodePacket clientPacket(Vec3 center, float power, Vec3 knockback) {
+        return new ClientboundExplodePacket(center.x, center.y, center.z, power, List.of(), knockback,
+                Explosion.BlockInteraction.DESTROY, net.minecraft.core.particles.ParticleTypes.EXPLOSION,
+                net.minecraft.core.particles.ParticleTypes.EXPLOSION_EMITTER, net.minecraft.sounds.SoundEvents.GENERIC_EXPLODE);
+    }
+    static void sendEffects(ServerLevel level, Vec3 center, float power, Map<ServerPlayer, Vec3> hitPlayers) {
+        for (ServerPlayer player : level.players()) {
+            if (player.distanceToSqr(center) < 4096.0)
+                player.connection.send(clientPacket(center, power, hitPlayers.get(player)));
+        }
     }
 }

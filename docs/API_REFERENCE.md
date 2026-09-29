@@ -16,7 +16,7 @@ This is the consumer contract for the `com.nstut.explosion.terrain` API introduc
 
 ## Dependency setup
 
-Build with `./gradlew buildAll publishToMavenLocal`. Consumers use Maven group `com.nstut` and version `1.1.0` with the matching artifact:
+Build with `./gradlew buildAll publishToMavenLocal`. Consumers use Maven group `com.nstut` and version `1.1.1` with the matching artifact:
 
 | Target | Runtime artifact ID |
 | --- | --- |

@@ -1,6 +1,6 @@
 # Mod author integration guide
 
-Boom 1.1.0 exposes Java APIs in `com.nstut.explosion` and `com.nstut.explosion.terrain`. Use the explosion scheduler for an explosion with Boom's effects/damage policy, or the terrain passes when your mod owns the effect and needs bounded no-drop world editing. [Celestial Nail](https://github.com/UpperMoon0/Celestial-Nail) is a terrain consumer.
+Boom 1.1.1 exposes Java APIs in `com.nstut.explosion` and `com.nstut.explosion.terrain`. Use the explosion scheduler for an explosion with Boom's effects/damage policy, or the terrain passes when your mod owns the effect and needs bounded no-drop world editing. [Celestial Nail](https://github.com/UpperMoon0/Celestial-Nail) is a terrain consumer.
 
 ## Add the dependency
 
@@ -14,29 +14,29 @@ On Windows use `gradlew.bat`. In your consumer, add `mavenLocal()` to the reposi
 
 | Target | Coordinate |
 | --- | --- |
-| Fabric 1.20.1 | `com.nstut:perfomant_boom-fabric:1.1.0` |
-| Forge 1.20.1 | `com.nstut:perfomant_boom-forge:1.1.0` |
-| Fabric 1.21.1 | `com.nstut:perfomant_boom-fabric-1.21.1:1.1.0` |
-| NeoForge 1.21.1 | `com.nstut:perfomant_boom-neoforge-1.21.1:1.1.0` |
-| NeoForge 26.1.2 | `com.nstut:perfomant_boom-neoforge-26.1.2:1.1.0` |
+| Fabric 1.20.1 | `com.nstut:perfomant_boom-fabric:1.1.1` |
+| Forge 1.20.1 | `com.nstut:perfomant_boom-forge:1.1.1` |
+| Fabric 1.21.1 | `com.nstut:perfomant_boom-fabric-1.21.1:1.1.1` |
+| NeoForge 1.21.1 | `com.nstut:perfomant_boom-neoforge-1.21.1:1.1.1` |
+| NeoForge 26.1.2 | `com.nstut:perfomant_boom-neoforge-26.1.2:1.1.1` |
 
 For a Fabric 1.21.1 Loom platform module:
 
 ```groovy
 repositories { mavenLocal() }
 dependencies {
-    modImplementation "com.nstut:perfomant_boom-fabric-1.21.1:1.1.0"
+    modImplementation "com.nstut:perfomant_boom-fabric-1.21.1:1.1.1"
 }
 ```
 
-For an Architectury/Loom common module targeting 1.21.1, compile against `modCompileOnly "com.nstut:perfomant_boom-common-1.21.1:1.1.0"`; the platform module still needs the runtime dependency above. For 1.20.1 common code use `perfomant_boom-common`, with `modImplementation` on the matching Fabric/Forge platform module.
+For an Architectury/Loom common module targeting 1.21.1, compile against `modCompileOnly "com.nstut:perfomant_boom-common-1.21.1:1.1.1"`; the platform module still needs the runtime dependency above. For 1.20.1 common code use `perfomant_boom-common`, with `modImplementation` on the matching Fabric/Forge platform module.
 
 For a NeoForge 1.21.1 ModDevGradle module:
 
 ```groovy
 repositories { mavenLocal() }
 dependencies {
-    implementation "com.nstut:perfomant_boom-neoforge-1.21.1:1.1.0"
+    implementation "com.nstut:perfomant_boom-neoforge-1.21.1:1.1.1"
 }
 ```
 
@@ -49,7 +49,7 @@ Gradle dependencies alone do not tell the user's loader to require Boom. Add the
 Fabric: merge into the existing `depends` object in `fabric.mod.json`:
 
 ```json
-"perfomant_boom": "1.1.0"
+"perfomant_boom": "1.1.1"
 ```
 
 Forge 1.20.1: add to `META-INF/mods.toml`:
@@ -58,7 +58,7 @@ Forge 1.20.1: add to `META-INF/mods.toml`:
 [[dependencies.your_mod_id]]
 modId="perfomant_boom"
 mandatory=true
-versionRange="[1.1.0]"
+versionRange="[1.1.1]"
 ordering="NONE"
 side="BOTH"
 ```
@@ -69,7 +69,7 @@ NeoForge: add to `META-INF/neoforge.mods.toml`:
 [[dependencies.your_mod_id]]
 modId="perfomant_boom"
 type="required"
-versionRange="[1.1.0]"
+versionRange="[1.1.1]"
 ordering="NONE"
 side="BOTH"
 ```

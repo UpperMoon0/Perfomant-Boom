@@ -2,13 +2,9 @@ package com.nstut.explosion;
 
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.sounds.SoundEvents;
-import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
-import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Explosion;
 import net.minecraft.world.level.gameevent.GameEvent;
@@ -71,6 +67,7 @@ public final class ExplosionScheduler {
         FastExplosionEngine.IncrementalCalculation calculation;
         ObjectArrayList<BlockPos> order;
         List<Entity> entities;
+        final java.util.Map<net.minecraft.server.level.ServerPlayer, Vec3> hitPlayers = new java.util.HashMap<>();
         boolean started, calculated, damaged;
         int entityIndex, blockIndex, changed, passes;
         long work, maximum;
@@ -99,17 +96,14 @@ public final class ExplosionScheduler {
             }
             if (!damaged) {
                 while (entityIndex < entities.size()) {
-                    VanillaExplosionAdapter.hurt(level, explosion, entities.get(entityIndex++));
+                    VanillaExplosionAdapter.hurt(level, explosion, entities.get(entityIndex++), hitPlayers);
                     if (System.nanoTime() >= deadline) return false;
                 }
                 damaged=true; entities=null;
                 order=new ObjectArrayList<>(calculation.affectedBlocks());
                 VanillaExplosionAdapter.shuffle(order, level.getRandom());
-                RandomSource effects=RandomSource.create();
-                level.playSound(null, center.x, center.y, center.z, SoundEvents.GENERIC_EXPLODE.value(),
-                        SoundSource.BLOCKS, 4, (1+(effects.nextFloat()-effects.nextFloat())*0.2F)*0.7F);
-                level.sendParticles(power < 2 ? ParticleTypes.EXPLOSION : ParticleTypes.EXPLOSION_EMITTER,
-                        center.x, center.y, center.z, 1, 0, 0, 0, 0);
+                VanillaExplosionAdapter.sendEffects(level, center, power, hitPlayers);
+                hitPlayers.clear();
             }
             while (blockIndex < order.size()) {
                 BlockPos pos=order.get(blockIndex++);
