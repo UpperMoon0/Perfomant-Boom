@@ -409,9 +409,15 @@ class FrozenInputs:
 
     def inventory(self):
         paths = set(self.extra_paths) | set(p for p in self.root.iterdir() if p.is_file() and p.name != '.git')
+        # Per-loader .gradle/architectury metadata is writable Gradle/Loom export state.
+        # export_live_launch.gradle copies every referenced Architectury metadata file
+        # into evidence/frozen-launch and rewrites the JVM args to those copies before
+        # this snapshot is created. Hash the copies (extra_paths), not the abandoned
+        # writable originals; a single-use Gradle daemon may rewrite their generated
+        # metadata after its client process has already exited.
         for directory in ('tools', '.github', 'gradle', 'common/src', 'fabric/src', 'forge/src',
                           'common/build/classes', 'common/build/resources', 'common/build/devlibs', 'common/build/libs',
-                          '.gradle/architectury', 'fabric/.gradle/architectury', 'forge/.gradle/architectury',
+                          '.gradle/architectury',
                           'fabric/build/classes', 'fabric/build/resources', 'fabric/build/devlibs', 'fabric/build/libs',
                           'forge/build/classes', 'forge/build/resources', 'forge/build/devlibs', 'forge/build/libs'):
             for p in (self.root / directory).rglob('*'):

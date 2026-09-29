@@ -74,6 +74,24 @@ class HarnessTests(unittest.TestCase):
             frozen=live.FrozenInputs(root); p.write_bytes(b'new bytes')
             with self.assertRaises(RuntimeError): frozen.check()
 
+    def test_writable_architectury_export_metadata_is_replaced_by_frozen_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            writable=root/'fabric/.gradle/architectury/.properties'
+            writable.parent.mkdir(parents=True)
+            writable.write_text('generated-at=one')
+            frozen_copy=root/'build/evidence/frozen-launch/client/.properties'
+            frozen_copy.parent.mkdir(parents=True)
+            frozen_copy.write_text('generated-at=one')
+
+            frozen=live.FrozenInputs(root,[frozen_copy])
+            writable.write_text('generated-at=two')
+            frozen.check()
+
+            frozen_copy.write_text('tampered')
+            with self.assertRaises(RuntimeError):
+                frozen.check()
+
     def test_evidence_creation_does_not_invalidate_frozen_sources(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp); frozen=live.FrozenInputs(root)
