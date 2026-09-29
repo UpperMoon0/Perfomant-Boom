@@ -1,6 +1,6 @@
 # Explosion and terrain API reference
 
-For dependency snippets and integration examples, start with [MODMAKER.md](../MODMAKER.md). Pack authors and server operators should use [PACKMAKER.md](../PACKMAKER.md).
+For dependency snippets and integration examples, start with [INTEGRATION.md](../INTEGRATION.md). Pack authors and server operators should use [PACKMAKER.md](../PACKMAKER.md).
 
 ## Scheduled explosion API
 

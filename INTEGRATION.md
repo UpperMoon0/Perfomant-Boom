@@ -1,4 +1,4 @@
-# Mod author integration guide
+# Integration guide
 
 Boom 1.1.1 exposes Java APIs in `com.nstut.explosion` and `com.nstut.explosion.terrain`. Use the explosion scheduler for an explosion with Boom's effects/damage policy, or the terrain passes when your mod owns the effect and needs bounded no-drop world editing. [Celestial Nail](https://github.com/UpperMoon0/Celestial-Nail) is a terrain consumer.
 

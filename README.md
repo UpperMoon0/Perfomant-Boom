@@ -1,6 +1,6 @@
 # Perfomant Boom
 
-Large explosions spread across server ticks, plus a Java terrain library for other Minecraft mods. Boom provides the operator command `/boom <power>` and the terrain engine used by [Celestial Nail](https://github.com/UpperMoon0/Celestial-Nail).
+Large explosions spread across server ticks, plus a Java terrain library for other Minecraft mods. Boom provides the operator command `/boom <power>` and reusable terrain operations for mod integrations.
 
 ## What the mod does
 
@@ -9,7 +9,7 @@ Large explosions spread across server ticks, plus a Java terrain library for oth
 - **Resumable terrain work:** supplies cursors and shared per-level work budgets. Integrating mods control when tasks advance and can save their progress across restarts.
 - **Five targets:** Fabric and Forge 1.20.1, Fabric and NeoForge 1.21.1, and NeoForge 26.1.2.
 
-Boom does not automatically replace TNT, creepers or explosions from other mods. Integrations must explicitly call its API. Celestial Nail supplies its own monument, animation, damage and strike sequence; Boom supplies its terrain operations. Boom's command works without Nail.
+Boom does not automatically replace TNT, creepers or explosions from other mods. Integrations must explicitly call its API. Boom's command works as a standalone feature.
 
 ## Try it
 
@@ -41,7 +41,7 @@ Choose exactly one runnable JAR matching your Minecraft version and loader; excl
 | 1.21.1 | NeoForge | None | 21 |
 | 26.1.2 | NeoForge | None | 25 |
 
-Fabric requires Loader **0.18.4+**. When using Nail, install matching Boom and Nail versions on server and participating clients, together with Nail's additional dependencies. Vanilla-client/server-only deployment is not certified by the current integration tests.
+Fabric requires Loader **0.18.4+**. When using an integrating mod, follow its client/server installation requirements and include its additional dependencies. Vanilla-client/server-only deployment is not certified by the current integration tests.
 
 Find published assets on [GitHub Releases](https://github.com/UpperMoon0/Perfomant-Boom/releases). The [CurseForge project](https://www.curseforge.com/minecraft/mc-mods/perfomant-boom) has ID **1718134**; availability there depends on publication and moderation. This matrix describes source support, not a claim that every file has been published.
 
@@ -59,7 +59,7 @@ Find published assets on [GitHub Releases](https://github.com/UpperMoon0/Perfoma
 
 All live-world calls belong on the server thread. Boom's loader hooks drive queued explosions; the consuming mod's tick lifecycle drives terrain passes. Terrain consumers own visuals, damage, networking, chunk lifetime and persistence.
 
-Start with [MODMAKER.md](MODMAKER.md) for Gradle dependencies, loader metadata and Java examples, then consult the [API reference](docs/API_REFERENCE.md). Maven coordinates currently require building and publishing locally; this repository does not configure a hosted Maven endpoint.
+Start with [INTEGRATION.md](INTEGRATION.md) for Gradle dependencies, loader metadata and Java examples, then consult the [API reference](docs/API_REFERENCE.md). Maven coordinates currently require building and publishing locally; this repository does not configure a hosted Maven endpoint.
 
 ## Behavior and limits
 
@@ -85,7 +85,7 @@ Runnable JARs are in each loader module's `build/libs`. Legacy `fabric` and `for
 ## Documentation and support
 
 - [Packmaker and server guide](PACKMAKER.md)
-- [Mod author guide](MODMAKER.md) and [API reference](docs/API_REFERENCE.md)
+- [Integration guide](INTEGRATION.md) and [API reference](docs/API_REFERENCE.md)
 - [Architecture](docs/ARCHITECTURE.md), [source audit](docs/multiversion-audit.md) and [contributing](CONTRIBUTING.md)
 - [Testing](TESTING.md), [releasing](RELEASING.md) and [changelog](CHANGELOG.md)
 - [CurseForge description](CURSEFORGE.md) and [project icon](icon.png)

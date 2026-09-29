@@ -1,6 +1,6 @@
 # Packmaker and server guide
 
-Boom adds an administrative explosion command and a Java library for integrating mods. This guide covers packs, maps and servers; Java integrations belong in [MODMAKER.md](MODMAKER.md).
+Boom adds an administrative explosion command and a Java library for integrating mods. This guide covers packs, maps and servers; Java integrations belong in [INTEGRATION.md](INTEGRATION.md).
 
 ## Install the correct files
 
