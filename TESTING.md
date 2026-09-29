@@ -54,7 +54,7 @@ Implementation was checked against the decompiled Minecraft **1.20.1** files in 
 - `world/level/Level.java:203–245`: `setBlock` checks the post-removal state, dispatches neighbor changes for flag 1 and old/new indirect plus direct shapes when flag 16 is absent (flags 2, recursion depth 511 after masking/decrement). `world/level/block/state/BlockBehaviour.java:971–989` forwards all six direct shapes. `world/level/redstone/CollectingNeighborUpdater.java:42–103` copies queued positions and drains the synchronous update chain. `world/level/block/FallingBlock.java:32–53` schedules the falling tick from placement/shape updates and spawns the falling entity when the support is air.
 - Forge 1.20.1 snapshots mutable block positions before entering the block-state mutation lifecycle to prevent retained-position leaks. `ChunkBlockModifier` now takes the same defensive approach before `onRemove`, lighting, neighbor/shape, POI and explosion callbacks. A Mockito regression retains the callback argument, reuses the caller's mutable cursor, and requires the retained coordinate to remain unchanged and immutable.
 
-The supported target is 1.20.1 Fabric/Forge; behavior from 1.21.1 or 26.1.2 was not substituted for this implementation.
+The source basis and frozen live fixtures in this section target 1.20.1 Fabric/Forge; behavior from 1.21.1 or 26.1.2 was not substituted for that implementation. The modern targets have the separate regression matrix described below.
 
 ## Evidence and performance interpretation
 
@@ -72,3 +72,26 @@ Only the no-drops scenario is an equivalent-loot comparison. Default-loot vanill
 ## Scope
 
 These fixtures cover seeded static vanilla blocks, a dynamic sand support/normal-restart regression, chunk/section mutation, lighting, real network convergence and persistence. Forge GameTest additionally covers chest block-entity cleanup. The scheduler keeps its own queued explosions' RNG phases ordered by deferring each later task's ray-strength reservation until it becomes the queue head. It does not make Level.random globally atomic across multiple server ticks: unrelated systems that consume that shared RNG while one explosion is time-sliced can still shift the eventual shuffle relative to a single-tick vanilla explosion. They do not certify every modded explosion hook, entity behavior, fluid simulation, custom protection mod or arbitrary dynamic world change. Development runtime gates validate the exact source commit; release packaging separately verifies remapped artifact metadata and provenance rather than claiming the development launch used the release JAR bytes.
+
+## Multiversion API regression matrix
+
+Run Gradle with Java 21; toolchains select Java 17, 21 or 25 for each target.
+
+```sh
+./gradlew buildAll
+./gradlew :forge:runBoomGameTestServer
+./gradlew :neoforge-26.1.2:test
+python -m unittest discover -s tools -p 'test_*.py'
+```
+
+`core:test` covers the extracted budget and resumable sphere/fluid/boundary cursors.
+Modern ray selection, air-inclusive shuffle/RNG order, bedrock resistance and slice-resume
+regressions run for Fabric's 1.21.1 common module and both NeoForge versions. NeoForge uses
+ModDevGradle's loader-aware JUnit environment. 26.1.2 additionally runs a real ephemeral
+server to verify container removal without drops and the production scheduler tick hook.
+
+After publishing Boom to Maven local, run Celestial Nail's complete build and its
+`:neoforge-1.21.1:runGameTestServer`. That suite verifies the consumer against the installed
+Boom mixins: saved progress, cancellation, shared budgets, light/POI/BE state, fluid purge,
+boundary support, no drops, and forced-chunk ownership. Do not interpret a successful build
+or server fixture as a live-client performance measurement for the new targets.

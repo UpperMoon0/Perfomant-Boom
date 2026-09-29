@@ -46,10 +46,10 @@ class ReleaseTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             with zipfile.ZipFile(path, "w") as jar:
                 jar.writestr("com/nstut/explosion/FastExplosionEngine.class", b"fixture")
-                if loader == "fabric":
+                if loader.startswith("fabric"):
                     jar.writestr("fabric.mod.json", json.dumps({"id": "perfomant_boom", "version": version}))
                 else:
-                    jar.writestr("META-INF/mods.toml", f'[[mods]]\nmodId = "perfomant_boom"\nversion = "{version}"\n')
+                    jar.writestr("META-INF/neoforge.mods.toml" if loader.startswith("neoforge") else "META-INF/mods.toml", f'[[mods]]\nmodId = "perfomant_boom"\nversion = "{version}"\n')
 
     def package(self):
         self.fake_jars()
@@ -193,14 +193,14 @@ class ReleaseTests(unittest.TestCase):
     def test_package_and_verify_both_loaders(self):
         directory = self.package()
         release.verify(self.root, directory)
-        self.assertEqual(len(list(directory.glob("*.jar"))), 2)
+        self.assertEqual(len(list(directory.glob("*.jar"))), len(release.LOADERS))
 
     def test_sources_and_dev_jars_are_excluded(self):
         self.fake_jars()
         for suffix in ("sources", "dev", "dev-shadow", "javadoc"):
             (self.root / f"fabric/build/libs/perfomant_boom-fabric-1.0.1-{suffix}.jar").write_bytes(b"not release")
         release.package(self.root, self.root / "release")
-        self.assertEqual(len(list((self.root / "release").glob("*.jar"))), 2)
+        self.assertEqual(len(list((self.root / "release").glob("*.jar"))), len(release.LOADERS))
 
     def test_extra_runnable_jar_rejected(self):
         self.fake_jars()

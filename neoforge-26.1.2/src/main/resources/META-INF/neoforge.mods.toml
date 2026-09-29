@@ -1,0 +1,21 @@
+modLoader="javafml"
+loaderVersion="[4,)"
+license="MIT"
+[[mods]]
+modId="perfomant_boom"
+version="${version}"
+displayName="Perfomant Boom"
+[[dependencies.perfomant_boom]]
+modId="neoforge"
+type="required"
+versionRange="[26.1.2.99,)"
+ordering="NONE"
+side="BOTH"
+[[dependencies.perfomant_boom]]
+modId="minecraft"
+type="required"
+versionRange="[26.1.2,26.1.3)"
+ordering="NONE"
+side="BOTH"
+[[mixins]]
+config="perfomant_boom.terrain.mixins.json"

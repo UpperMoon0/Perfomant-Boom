@@ -14,6 +14,8 @@ allprojects {
 }
 
 subprojects {
+    if (project.name == 'core' || project.name.startsWith('neoforge-')) return
+    def modern = project.name.endsWith('1.21.1')
     apply plugin: 'dev.architectury.loom'
     apply plugin: 'architectury-plugin'
     apply plugin: 'maven-publish'
@@ -24,6 +26,8 @@ subprojects {
     }
 
     repositories {
+        mavenLocal()
+        mavenCentral()
         // Add repositories to retrieve artifacts from in here.
         // You should only use this when depending on other mods because
         // Loom adds the essential maven repositories to download Minecraft and libraries from automatically.
@@ -36,7 +40,7 @@ subprojects {
     }
 
     dependencies {
-        minecraft "net.minecraft:minecraft:$rootProject.minecraft_version"
+        minecraft "net.minecraft:minecraft:${modern ? '1.21.1' : rootProject.minecraft_version}"
         mappings loom.officialMojangMappings()
         testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.2'
         testImplementation 'org.mockito:mockito-core:5.3.1'
@@ -55,12 +59,13 @@ subprojects {
         // If you remove this line, sources will not be generated.
         withSourcesJar()
 
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        toolchain.languageVersion = JavaLanguageVersion.of(modern ? 21 : 17)
+        sourceCompatibility = modern ? JavaVersion.VERSION_21 : JavaVersion.VERSION_17
+        targetCompatibility = modern ? JavaVersion.VERSION_21 : JavaVersion.VERSION_17
     }
 
     tasks.withType(JavaCompile).configureEach {
-        it.options.release = 17
+        it.options.release = modern ? 21 : 17
     }
 
     // Configure Maven publishing.
@@ -79,5 +84,17 @@ subprojects {
             // The repositories here will be used for publishing your artifact, not for
             // retrieving dependencies.
         }
+    }
+}
+
+tasks.register('buildAll') {
+    group = 'build'
+    dependsOn ':core:check', ':common:test', ':common-1.21.1:test', ':fabric:build', ':forge:build', ':fabric-1.21.1:build', ':neoforge-1.21.1:build', ':neoforge-26.1.2:build'
+}
+
+// Include the redistribution license in every published JAR.
+allprojects {
+    tasks.withType(Jar).configureEach {
+        from(rootProject.file("LICENSE")) { rename { "LICENSE_${rootProject.name}" } }
     }
 }

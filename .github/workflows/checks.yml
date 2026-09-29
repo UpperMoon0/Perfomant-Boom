@@ -40,7 +40,7 @@ jobs:
           "$directory/actionlint" -color
 
   build:
-    name: JVM tests and both loader JARs
+    name: JVM tests and all version/loader JARs
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -57,15 +57,15 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
-      - name: Test and build Minecraft 1.20.1 Fabric and Forge
+      - name: Test and build every supported target
         shell: bash
         run: |
           chmod +x gradlew
-          ./gradlew test build -I .github/reproducible.gradle --stacktrace --no-daemon --max-workers=2
+          ./gradlew buildAll -I .github/reproducible.gradle --stacktrace --no-daemon --max-workers=2
       - name: Production scheduler GameTest
         shell: bash
         run: ./gradlew :forge:runBoomGameTestServer --no-daemon --console=plain --max-workers=2
-      - name: Select and verify the two runnable loader artifacts
+      - name: Select and verify all runnable loader artifacts
         run: |
           python tools/release.py package
           python tools/release.py verify
