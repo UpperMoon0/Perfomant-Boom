@@ -1,0 +1,174 @@
+name: Release
+
+# A main-branch version bump releases automatically. Workflow/tooling repairs can
+# retry an untagged version, and manual runs retry publication at the same SHA.
+on:
+  push:
+    branches: [main]
+    paths:
+      - gradle.properties
+      - .github/workflows/**
+      - .github/reproducible.gradle
+      - tools/release.py
+      - changelog/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perfomant-boom-release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Check version and release preflight
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      changelog: ${{ steps.plan.outputs.changelog }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compare mod_version and reject tag collisions
+        id: plan
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: python tools/release.py plan
+      - name: Report publication destinations
+        env:
+          CURSEFORGE_PROJECT_ID: ${{ vars.CURSEFORGE_PROJECT_ID }}
+        run: |
+          if [ -n "$CURSEFORGE_PROJECT_ID" ]; then
+            echo "CurseForge and GitHub publication enabled." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "GitHub publication enabled. CurseForge is not configured: set CURSEFORGE_PROJECT_ID and CURSEFORGE_API_TOKEN to enable it." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  checks:
+    name: Validate exact release commit
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    uses: ./.github/workflows/checks.yml
+
+  curseforge:
+    name: Publish ${{ matrix.loader }} to CurseForge
+    needs: [plan, checks]
+    if: needs.plan.outputs.release == 'true' && vars.CURSEFORGE_PROJECT_ID != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - loader: fabric
+            dependencies: "419699(required)\n306612(required)"
+          - loader: forge
+            dependencies: "419699(required)"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-candidate
+          path: artifacts
+      - name: Verify exact tested artifacts and required credentials
+        env:
+          CURSEFORGE_API_TOKEN: ${{ secrets.CURSEFORGE_API_TOKEN }}
+        run: |
+          test -n "$CURSEFORGE_API_TOKEN" || { echo 'Missing required secret CURSEFORGE_API_TOKEN' >&2; exit 1; }
+          git fetch origin --tags
+          python tools/release.py guard-tag
+          python tools/release.py verify --directory artifacts
+      - uses: Kira-NT/mc-publish@v3.3
+        with:
+          curseforge-id: ${{ vars.CURSEFORGE_PROJECT_ID }}
+          curseforge-token: ${{ secrets.CURSEFORGE_API_TOKEN }}
+          files: artifacts/perfomant_boom-${{ matrix.loader }}-${{ needs.plan.outputs.version }}.jar
+          name: Perfomant Boom ${{ needs.plan.outputs.version }} - ${{ matrix.loader }} 1.20.1
+          version: ${{ needs.plan.outputs.version }}-${{ matrix.loader }}-1.20.1
+          version-type: release
+          changelog-file: ${{ needs.plan.outputs.changelog }}
+          loaders: ${{ matrix.loader }}
+          game-versions: 1.20.1
+          game-version-filter: none
+          environment: client | server
+          curseforge-dependencies: ${{ matrix.dependencies }}
+          retry-attempts: 5
+          retry-delay: 15000
+          fail-mode: fail
+
+  github-release:
+    name: Tag and publish verified GitHub release
+    needs: [plan, checks, curseforge]
+    if: >-
+      always() && github.ref == 'refs/heads/main' &&
+      needs.plan.outputs.release == 'true' && needs.checks.result == 'success' &&
+      (needs.curseforge.result == 'success' || needs.curseforge.result == 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-candidate
+          path: artifacts
+      - name: Verify provenance and reserve the immutable version tag
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          python tools/release.py verify --directory artifacts
+          git fetch origin --tags
+          python tools/release.py guard-tag
+          if ! git show-ref --verify --quiet "refs/tags/$TAG"; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git tag -a "$TAG" "$GITHUB_SHA" -m "Perfomant Boom $TAG"
+            git push origin "refs/tags/$TAG"
+          fi
+      - name: Publish the tested bytes without overwriting a published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          CHANGELOG: ${{ needs.plan.outputs.changelog }}
+        run: |
+          set -euo pipefail
+          if state="$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if [ "$state" = false ]; then
+              mkdir -p "$RUNNER_TEMP/existing-release"
+              gh release download "$TAG" --pattern SHA256SUMS --dir "$RUNNER_TEMP/existing-release"
+              cmp artifacts/SHA256SUMS "$RUNNER_TEMP/existing-release/SHA256SUMS" || {
+                echo 'Published bytes differ; do not overwrite them. Bump mod_version.' >&2; exit 1;
+              }
+              echo "$TAG is already published with matching checksums." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          else
+            gh release create "$TAG" --verify-tag --draft \
+              --title "Perfomant Boom $TAG" --notes-file "$CHANGELOG"
+          fi
+          gh release upload "$TAG" artifacts/*.jar artifacts/SHA256SUMS artifacts/manifest.json --clobber
+          gh release edit "$TAG" --draft=false
+          echo "Published $TAG with both verified loader JARs." >> "$GITHUB_STEP_SUMMARY"

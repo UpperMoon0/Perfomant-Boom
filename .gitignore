@@ -34,3 +34,7 @@ Thumbs.db
 .env
 .java-version
 dependency-reduced-pom.xml
+
+# Python tooling
+__pycache__/
+*.py[cod]

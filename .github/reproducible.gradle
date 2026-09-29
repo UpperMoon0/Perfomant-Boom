@@ -1,0 +1,7 @@
+// Stable archive ordering/timestamps make same-commit release retries comparable.
+allprojects {
+    tasks.withType(org.gradle.api.tasks.bundling.AbstractArchiveTask).configureEach {
+        preserveFileTimestamps = false
+        reproducibleFileOrder = true
+    }
+}
