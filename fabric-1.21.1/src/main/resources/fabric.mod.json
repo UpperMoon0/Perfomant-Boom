@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "perfomant_boom",
+  "version": "${version}",
+  "name": "Perfomant Boom",
+  "description": "Cooperative explosion scheduling and reusable bounded terrain operations.",
+  "authors": [
+    "NsTut"
+  ],
+  "contact": {
+    "sources": "https://github.com/UpperMoon0/Perfomant-Boom"
+  },
+  "license": "CC0-1.0",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.nstut.fabric.ExampleModFabric"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.18.4",
+    "minecraft": "~1.21.1",
+    "java": ">=21",
+    "fabric-api": "*"
+  },
+  "mixins": [
+    "perfomant_boom.terrain.mixins.json"
+  ]
+}

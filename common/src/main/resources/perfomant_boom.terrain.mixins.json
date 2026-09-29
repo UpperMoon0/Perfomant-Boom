@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "package": "com.nstut.explosion.terrain.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "mixins": [
+    "TerrainBlockTicksMixin",
+    "TerrainBlockCallbacksMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "refmap": "perfomant_boom.refmap.json",
+  "minVersion": "0.8"
+}

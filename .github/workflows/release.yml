@@ -71,9 +71,25 @@ jobs:
       matrix:
         include:
           - loader: fabric
+            target: fabric
+            minecraft: 1.20.1
             dependencies: "419699(required)\n306612(required)"
           - loader: forge
+            target: forge
+            minecraft: 1.20.1
             dependencies: "419699(required)"
+          - loader: fabric
+            target: fabric-1.21.1
+            minecraft: 1.21.1
+            dependencies: "306612(required)"
+          - loader: neoforge
+            target: neoforge-1.21.1
+            minecraft: 1.21.1
+            dependencies: ""
+          - loader: neoforge
+            target: neoforge-26.1.2
+            minecraft: 26.1.2
+            dependencies: ""
     steps:
       - uses: actions/checkout@v4
         with:
@@ -98,13 +114,13 @@ jobs:
         with:
           curseforge-id: ${{ vars.CURSEFORGE_PROJECT_ID }}
           curseforge-token: ${{ secrets.CURSEFORGE_API_TOKEN }}
-          files: artifacts/perfomant_boom-${{ matrix.loader }}-${{ needs.plan.outputs.version }}.jar
-          name: Perfomant Boom ${{ needs.plan.outputs.version }} - ${{ matrix.loader }} 1.20.1
-          version: ${{ needs.plan.outputs.version }}-${{ matrix.loader }}-1.20.1
+          files: artifacts/perfomant_boom-${{ matrix.target }}-${{ needs.plan.outputs.version }}.jar
+          name: Perfomant Boom ${{ needs.plan.outputs.version }} - ${{ matrix.loader }} ${{ matrix.minecraft }}
+          version: ${{ needs.plan.outputs.version }}-${{ matrix.loader }}-${{ matrix.minecraft }}
           version-type: release
           changelog-file: ${{ needs.plan.outputs.changelog }}
           loaders: ${{ matrix.loader }}
-          game-versions: 1.20.1
+          game-versions: ${{ matrix.minecraft }}
           game-version-filter: none
           environment: client | server
           curseforge-dependencies: ${{ matrix.dependencies }}
@@ -171,4 +187,4 @@ jobs:
           fi
           gh release upload "$TAG" artifacts/*.jar artifacts/SHA256SUMS artifacts/manifest.json --clobber
           gh release edit "$TAG" --draft=false
-          echo "Published $TAG with both verified loader JARs." >> "$GITHUB_STEP_SUMMARY"
+          echo "Published $TAG with all verified version/loader JARs." >> "$GITHUB_STEP_SUMMARY"

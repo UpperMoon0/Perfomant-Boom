@@ -14,7 +14,8 @@ import sys
 import tomllib
 import zipfile
 
-LOADERS = ("fabric", "forge")
+LOADERS = ("fabric", "forge", "fabric-1.21.1", "neoforge-1.21.1", "neoforge-26.1.2")
+TARGET_VERSIONS = dict(zip(LOADERS, ("1.20.1", "1.20.1", "1.21.1", "1.21.1", "26.1.2")))
 VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 
@@ -125,11 +126,11 @@ def inspect_jar(path: Path, loader: str, version: str) -> None:
     with zipfile.ZipFile(path) as jar:
         if "com/nstut/explosion/FastExplosionEngine.class" not in jar.namelist():
             raise ValueError(f"Missing shared explosion engine in {path}")
-        if loader == "fabric":
+        if loader.startswith("fabric"):
             metadata = json.loads(jar.read("fabric.mod.json"))
             mod_id, actual = metadata["id"], metadata["version"]
         else:
-            metadata = tomllib.loads(jar.read("META-INF/mods.toml").decode("utf-8"))
+            metadata = tomllib.loads(jar.read("META-INF/neoforge.mods.toml" if loader.startswith("neoforge") else "META-INF/mods.toml").decode("utf-8"))
             mod_id, actual = metadata["mods"][0]["modId"], metadata["mods"][0]["version"]
         if (mod_id, actual) != ("perfomant_boom", version):
             raise ValueError(f"Wrong {loader} JAR metadata: {mod_id} {actual}; expected {version}")
@@ -150,7 +151,7 @@ def package(root: Path, output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
     if any(output.iterdir()):
         raise ValueError(f"Release staging directory must be empty: {output}")
-    # Validate both outputs before copying either; never publish a partial loader set.
+    # Validate every target before copying; never publish a partial version/loader set.
     jars = []
     for loader in LOADERS:
         directory = root / loader / "build" / "libs"
@@ -167,7 +168,7 @@ def package(root: Path, output: Path) -> None:
         shutil.copyfile(source, destination)
         files.append({"loader": loader, "name": source.name, "sha256": digest(destination)})
     manifest = {"source_sha": head_sha(root), "version": version,
-                "minecraft_version": cfg["minecraft_version"], "files": files}
+                "minecraft_version": cfg["minecraft_version"], "targets": TARGET_VERSIONS, "files": files}
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     (output / "SHA256SUMS").write_text(
         "".join(f"{item['sha256']}  {item['name']}\n" for item in files), encoding="utf-8")
@@ -180,10 +181,12 @@ def verify(root: Path, directory: Path) -> None:
         head_sha(root), cfg["mod_version"], cfg["minecraft_version"]
     ):
         raise ValueError("Artifact provenance does not match this exact source commit/version")
+    if manifest.get("targets") != TARGET_VERSIONS:
+        raise ValueError("Artifact target matrix does not match supported versions")
     files = manifest["files"]
     expected_names = [jar_name(loader, cfg["mod_version"]) for loader in LOADERS]
     if [entry["name"] for entry in files] != expected_names or [entry["loader"] for entry in files] != list(LOADERS):
-        raise ValueError("Manifest does not describe exactly the supported Fabric and Forge artifacts")
+        raise ValueError("Manifest does not describe exactly the supported version/loader artifacts")
     if sorted(p.name for p in directory.glob("*.jar")) != sorted(expected_names):
         raise ValueError("Unexpected or missing release JARs")
     for entry in files:

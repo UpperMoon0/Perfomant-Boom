@@ -3,12 +3,21 @@ pluginManagement {
         maven { url = 'https://maven.fabricmc.net/' }
         maven { url = 'https://maven.architectury.dev/' }
         maven { url = 'https://files.minecraftforge.net/maven/' }
+        maven { url = 'https://maven.neoforged.net/releases' }
         gradlePluginPortal()
     }
 }
 
+plugins { id 'org.gradle.toolchains.foojay-resolver-convention' version '0.9.0' }
 rootProject.name = 'perfomant_boom'
-
-include 'common'
-include 'fabric'
-include 'forge'
+def targets = ['core', 'common', 'fabric', 'forge', 'common-1.21.1', 'fabric-1.21.1', 'neoforge-1.21.1', 'neoforge-26.1.2']
+def tasks = gradle.startParameter.taskNames
+def requested = tasks.findAll { it.startsWith(':') }.collect { it.split(':')[1] }
+def selected = ['core'] as Set
+if (tasks.isEmpty() || tasks.any { !it.startsWith(':') } || requested.any { !(it in targets) }) selected.addAll(targets)
+else requested.each {
+    selected.add(it)
+    if (it in ['fabric', 'forge']) selected.add('common')
+    if (it == 'fabric-1.21.1') selected.add('common-1.21.1')
+}
+selected.each { if (it in targets) include it }

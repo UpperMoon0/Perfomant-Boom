@@ -1,0 +1,10 @@
+architectury { common(['fabric']) }
+dependencies { modImplementation 'net.fabricmc:fabric-loader:0.18.4' }
+sourceSets.main.java.srcDir rootProject.file('core/src/main/java')
+loom { mixin { defaultRefmapName = 'perfomant_boom.refmap.json' } }
+
+sourceSets.main.java.srcDir rootProject.file('common-modern/src/main/java')
+
+sourceSets.main.java.srcDir rootProject.file('terrain-common/src/main/java')
+
+sourceSets.test.java.srcDir rootProject.file('common-modern/src/test/java')

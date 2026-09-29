@@ -85,3 +85,8 @@ tasks.matching { it.name == 'runBoomGameTestServer' }.configureEach {
         }
     }
 }
+
+loom { forge { mixinConfig 'perfomant_boom.terrain.mixins.json' } }
+
+// Development Minecraft uses named classes; the packaged refmap targets production SRG.
+loom { runs { configureEach { vmArg '-Dmixin.env.disableRefMap=true' } } }
