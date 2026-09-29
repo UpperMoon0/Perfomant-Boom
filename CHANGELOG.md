@@ -4,6 +4,8 @@ Versioned release notes live in `changelog/`. Their presence describes planned/s
 
 ## Unreleased documentation
 
+- Adopt MIT licensing across source, loader metadata and packaged JARs.
+
 - Add player-facing CurseForge copy, installation/compatibility guidance, contributor and architecture documentation, and the shared terrain API contract.
 - Document same-version development dependency caching and distinguish modern coverage from the legacy live-client gates.
 

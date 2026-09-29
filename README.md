@@ -52,3 +52,7 @@ chunk ownership; Boom owns terrain execution. Install both mods, never shade Boo
 
 See [the source audit](docs/multiversion-audit.md), [TESTING.md](TESTING.md), and
 [RELEASING.md](RELEASING.md). Releases validate and package all five target JARs.
+
+## License
+
+Licensed under the [MIT License](LICENSE).

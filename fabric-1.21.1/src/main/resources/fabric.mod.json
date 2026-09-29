@@ -10,7 +10,7 @@
   "contact": {
     "sources": "https://github.com/UpperMoon0/Perfomant-Boom"
   },
-  "license": "CC0-1.0",
+  "license": "MIT",
   "environment": "*",
   "entrypoints": {
     "main": [

@@ -3,15 +3,15 @@
   "id": "perfomant_boom",
   "version": "${version}",
   "name": "Perfomant Boom",
-  "description": "This is an example description! Tell everyone what your mod is about!",
+  "description": "Scheduled explosions and a reusable bounded terrain API.",
   "authors": [
-    "Me!"
+    "NsTut"
   ],
   "contact": {
-    "homepage": "https://fabricmc.net/",
-    "sources": "https://github.com/FabricMC/fabric-example-mod"
+    "sources": "https://github.com/UpperMoon0/Perfomant-Boom",
+    "issues": "https://github.com/UpperMoon0/Perfomant-Boom/issues"
   },
-  "license": "CC0-1.0",
+  "license": "MIT",
   "icon": "assets/perfomant_boom/icon.png",
   "environment": "*",
   "entrypoints": {
@@ -28,9 +28,6 @@
     "java": ">=17",
     "architectury": ">=9.2.14",
     "fabric-api": "*"
-  },
-  "suggests": {
-    "another-mod": "*"
   },
   "mixins": [
     "perfomant_boom.terrain.mixins.json"

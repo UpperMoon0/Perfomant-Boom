@@ -51,4 +51,4 @@ Queued ordinary Boom explosions are not resumed after a server restart. Complete
 
 Include Minecraft and loader versions, Boom version, command power, installed integrations, and the crash report or latest log. For performance reports, describe the terrain and separate server tick delays from client rendering problems.
 
-Created by **NsTut**.
+Created by **NsTut**. Licensed under the MIT License.

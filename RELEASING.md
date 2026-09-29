@@ -34,7 +34,7 @@ The shared checks now include Forge GameTest and frozen real-client/persistence 
 
 Use [CURSEFORGE.md](CURSEFORGE.md) as the player-facing description and [icon.png](icon.png) as the project-page icon. Keep the description aligned with [COMPATIBILITY.md](docs/COMPATIBILITY.md), and link version notes from [CHANGELOG.md](CHANGELOG.md). The upload workflow publishes files; it does not synchronize the project description or icon. Update those manually in the project editor when needed.
 
-Before publication, resolve the legacy license metadata inconsistency: Fabric/modern targets declare CC0-1.0, while the legacy Forge template still says `Insert License Here`, and there is no standalone repository license. Confirm the intended license with the maintainer rather than copying another mod's terms. Legacy metadata also contains example author/description text; review it against the public description before shipping.
+Set the public project license to MIT, matching [LICENSE](LICENSE) and every loader target.
 
 ## API consumers
 

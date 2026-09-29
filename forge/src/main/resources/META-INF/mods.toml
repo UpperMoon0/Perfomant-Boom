@@ -1,15 +1,15 @@
 modLoader = "javafml"
 loaderVersion = "[47,)"
 #issueTrackerURL = ""
-license = "Insert License Here"
+license = "MIT"
 
 [[mods]]
 modId = "perfomant_boom"
 version = "${version}"
 displayName = "Perfomant Boom"
-authors = "Me!"
+authors = "NsTut"
 description = '''
-This is an example description! Tell everyone what your mod is about!
+Scheduled explosions and a reusable bounded terrain API.
 '''
 #logoFile = ""
 

@@ -91,3 +91,10 @@ tasks.register('buildAll') {
     group = 'build'
     dependsOn ':core:check', ':common:test', ':common-1.21.1:test', ':fabric:build', ':forge:build', ':fabric-1.21.1:build', ':neoforge-1.21.1:build', ':neoforge-26.1.2:build'
 }
+
+// Include the redistribution license in every published JAR.
+allprojects {
+    tasks.withType(Jar).configureEach {
+        from(rootProject.file("LICENSE")) { rename { "LICENSE_${rootProject.name}" } }
+    }
+}
