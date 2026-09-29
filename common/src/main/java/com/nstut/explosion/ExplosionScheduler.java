@@ -4,7 +4,6 @@ import com.nstut.ExampleMod;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
-import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectIterator;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -135,6 +134,13 @@ public final class ExplosionScheduler {
             task.currentBlockIndex, task.currentBlocks.size(), task.actualChangedBlocks);
     }
 
+    // Read-only fixture assertion: distinguish an unprocessed interior candidate
+    // from a survivor outside the selected final crater.
+    static boolean pendingSelectionContains(BlockPos pos) {
+        ExplosionTask task = TASK_QUEUE.peek();
+        return task != null && task.calculation.blocks().contains(pos.asLong());
+    }
+
     private static final class ExplosionTask {
         private final ServerLevel level;
         private final Vec3 center;
@@ -142,7 +148,6 @@ public final class ExplosionScheduler {
         private final FastExplosionEngine.IncrementalCalculation calculation;
         private final Consumer<ExplosionMetrics> completion;
         private final LongOpenHashSet queuedLightChecks = new LongOpenHashSet();
-        private final Long2ObjectOpenHashMap<BlockState> boundaryNeighborUpdates = new Long2ObjectOpenHashMap<>();
         private final long createdNanos = System.nanoTime();
         private final BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
         private final BlockPos.MutableBlockPos lightCheckPos = new BlockPos.MutableBlockPos();
@@ -156,7 +161,6 @@ public final class ExplosionScheduler {
         private ChunkBlockModifier.MutationContext mutation;
         private int actualChangedBlocks;
         private it.unimi.dsi.fastutil.longs.LongIterator lightCheckIterator;
-        private ObjectIterator<Long2ObjectMap.Entry<BlockState>> neighborUpdateIterator;
         private boolean postUpdatesStarted;
         private List<Entity> entitiesToDamage;
         private DamageSource explosionDamageSource;
@@ -417,16 +421,15 @@ public final class ExplosionScheduler {
                 oldState.getBlock().wasExploded(level, mutablePos, blockCallbackExplosion);
             }
 
-            boolean touchesSurvivor = false;
-
             // Each mutation already queues vanilla light work. Recheck the final
             // crater boundary after all chunks are processed as well.
             if (oldState.getLightEmission() > 0) {
                 collectLightCheck(x, y, z);
             }
 
-            // Interior-to-interior work is wasted because both blocks disappear. Only the
-            // surviving boundary needs lighting and neighbor notifications.
+            // This is only an extra final-crater LIGHT recheck. Neighbor/shape
+            // notifications already ran synchronously in MutationContext.remove(),
+            // including notifications to candidates not removed yet.
             for (Direction direction : DIRECTIONS) {
                 int nx = x + direction.getStepX();
                 int ny = y + direction.getStepY();
@@ -437,13 +440,8 @@ public final class ExplosionScheduler {
 
                 long neighbor = BlockPos.asLong(nx, ny, nz);
                 if (!calculation.blocks().contains(neighbor)) {
-                    touchesSurvivor = true;
                     collectLightCheck(nx, ny, nz);
                 }
-            }
-
-            if (touchesSurvivor) {
-                boundaryNeighborUpdates.put(BlockPos.asLong(x, y, z), oldState);
             }
 
             return true;
@@ -458,13 +456,12 @@ public final class ExplosionScheduler {
                 postUpdatesStarted = true;
 
                 // Boundary classification is complete. Drop the O(affected-blocks) data
-                // before lighting/physics cleanup can span more ticks.
+                // before the extra lighting rechecks can span more ticks.
                 calculation.blocks().clear();
                 calculation.blocksByChunk().clear();
                 chunkIterator = null;
 
                 lightCheckIterator = queuedLightChecks.iterator();
-                neighborUpdateIterator = boundaryNeighborUpdates.long2ObjectEntrySet().fastIterator();
             }
 
             int checksUntilDeadline = 8;
@@ -483,29 +480,6 @@ public final class ExplosionScheduler {
 
             queuedLightChecks.clear();
 
-            while (neighborUpdateIterator.hasNext()) {
-                Long2ObjectMap.Entry<BlockState> entry = neighborUpdateIterator.next();
-                long packed = entry.getLongKey();
-                mutablePos.set(BlockPos.getX(packed), BlockPos.getY(packed), BlockPos.getZ(packed));
-                BlockState oldState = entry.getValue();
-
-                // Vanilla markAndNotifyBlock performs both neighborChanged and shape
-                // propagation. Doing it only on the surviving crater boundary preserves
-                // doors/beds/redstone without paying O(volume) physics cost.
-                level.updateNeighborsAt(mutablePos, oldState.getBlock());
-                oldState.updateIndirectNeighbourShapes(level, mutablePos, 2, 511);
-                Blocks.AIR.defaultBlockState().updateNeighbourShapes(level, mutablePos, 2, 511);
-                Blocks.AIR.defaultBlockState().updateIndirectNeighbourShapes(level, mutablePos, 2, 511);
-
-                if (--checksUntilDeadline == 0) {
-                    checksUntilDeadline = 8;
-                    if (System.nanoTime() >= deadlineNanos) {
-                        return false;
-                    }
-                }
-            }
-
-            boundaryNeighborUpdates.clear();
             finishTask();
             return true;
         }

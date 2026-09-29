@@ -505,7 +505,8 @@ def verify_lifecycle_evidence(evidence: Path, token: str) -> None:
     mutation = json.loads((evidence/'lifecycle-mutation-unload.json').read_text(encoding='utf-8'))
     partial = json.loads((evidence/'lifecycle-partial.json').read_text(encoding='utf-8'))
     reload = json.loads((evidence/'lifecycle-persistence.json').read_text(encoding='utf-8'))
-    if any(item.get('token') != token for item in (ray, mutation, partial, reload)):
+    physics = json.loads((evidence/'lifecycle-physics.json').read_text(encoding='utf-8'))
+    if any(item.get('token') != token for item in (ray, mutation, partial, reload, physics)):
         raise ValueError('Lifecycle evidence belongs to a different run')
     if not (ray.get('distinctChunk') is True and ray['selectedBefore'] > 0
             and ray['selectedBefore'] == ray['selectedAfter']):
@@ -517,6 +518,14 @@ def verify_lifecycle_evidence(evidence: Path, token: str) -> None:
             and all(reload.get(key) is True for key in ('partialMatched', 'vanillaBlockLightMatched', 'metadataMatched'))
             and all(reload[key] == partial[key] for key in ('processed', 'total', 'changed'))):
         raise ValueError('Missing partial-mutation shutdown/persistence evidence')
+    physics_flags = ('interiorSupport', 'sandPendingRemoval', 'fastSandTick', 'controlSandTick',
+                     'fastSandTickRestored', 'controlSandTickRestored', 'blockLightMatched')
+    if not (all(physics.get(key) is True for key in physics_flags)
+            and all(partial.get(key) is True for key in physics_flags[:4])
+            and physics['tickingTicks'] >= 40
+            and physics['sourceY'] == physics['landingY'] + 1
+            and physics['fastSandY'] == physics['controlSandY'] == physics['landingY']):
+        raise ValueError('Missing partial-shutdown neighbor/shape physics persistence evidence')
 
 
 def run(loader: str, timeout: int, require_clean: bool = False) -> int:

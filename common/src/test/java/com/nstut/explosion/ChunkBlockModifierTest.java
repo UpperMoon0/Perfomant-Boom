@@ -2,6 +2,7 @@ package com.nstut.explosion;
 
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.SectionPos;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.server.level.ServerLevel;
@@ -36,6 +37,7 @@ class ChunkBlockModifierTest {
         Fixture() {
             when(chunk.getSections()).thenReturn(new LevelChunkSection[]{section});
             when(chunk.getPos()).thenReturn(new ChunkPos(0,0));
+            when(chunk.getBlockState(any(BlockPos.class))).thenReturn(Blocks.AIR.defaultBlockState());
             when(chunk.getSkyLightSources()).thenReturn(sky);
             when(chunk.getOrCreateHeightmapUnprimed(any())).thenAnswer(call -> mock(Heightmap.class));
             when(section.getBlockState(anyInt(), anyInt(), anyInt())).thenReturn(Blocks.NETHERRACK.defaultBlockState());
@@ -72,11 +74,61 @@ class ChunkBlockModifierTest {
         verify(f.light).updateSectionStatus(SectionPos.of(new ChunkPos(0,0),0),true);
     }
 
+    @Test void everyRemovalDispatchesNeighborsAndAllShapesBeforeFinish() {
+        var f = new Fixture();
+        var notifications = new java.util.ArrayList<BlockPos>();
+        record Shape(Direction direction, BlockPos target, BlockPos source) {}
+        var shapes = new java.util.ArrayList<Shape>();
+        doAnswer(call -> {
+            assertTrue(f.chunk.isUnsaved(), "write must be dirty before physics callbacks");
+            BlockPos source = call.getArgument(0);
+            assertFalse(source instanceof BlockPos.MutableBlockPos, "callbacks must not retain the reused cursor");
+            notifications.add(source);
+            return null;
+        }).when(f.level).updateNeighborsAt(any(BlockPos.class), eq(Blocks.NETHERRACK));
+        doAnswer(call -> {
+            BlockPos target = call.getArgument(2), source = call.getArgument(3);
+            shapes.add(new Shape(call.getArgument(0), target.immutable(), source));
+            return null;
+        }).when(f.level).neighborShapeChanged(any(Direction.class), eq(Blocks.AIR.defaultBlockState()),
+            any(BlockPos.class), any(BlockPos.class), eq(2), eq(511));
+        var cursor = new BlockPos.MutableBlockPos(1,1,1);
+        f.mutation.remove(cursor);
+        cursor.set(2,1,1);
+        f.mutation.remove(cursor);
+        cursor.set(9,9,9);
+        assertEquals(java.util.List.of(new BlockPos(1,1,1), new BlockPos(2,1,1)), notifications);
+        assertEquals(12, shapes.size(), "all six faces of BOTH writes need shape propagation before finish()");
+        for (BlockPos source : notifications) for (Direction direction : Direction.values()) {
+            assertTrue(shapes.contains(new Shape(direction.getOpposite(), source.relative(direction), source)));
+        }
+    }
+
+    @Test void removalDispatchesOldStatesIndirectShapesBeforeFinish() {
+        var f = new Fixture();
+        var oldState = spy(Blocks.NETHERRACK.defaultBlockState());
+        when(f.section.getBlockState(anyInt(), anyInt(), anyInt())).thenReturn(oldState);
+        var pos = new BlockPos.MutableBlockPos(1,1,1);
+        f.mutation.remove(pos);
+        verify(oldState).updateIndirectNeighbourShapes(f.level, pos.immutable(), 2, 511);
+        verify(f.level).onBlockStateChange(pos.immutable(), oldState, Blocks.AIR.defaultBlockState());
+    }
+
+    @Test void removalHookReplacementDoesNotReceiveStaleAirShapes() {
+        var f = new Fixture();
+        when(f.chunk.getBlockState(any(BlockPos.class))).thenReturn(Blocks.STONE.defaultBlockState());
+        assertNotNull(f.mutation.remove(new BlockPos.MutableBlockPos(1,1,1)));
+        verify(f.level, never()).updateNeighborsAt(any(), any());
+        verify(f.level, never()).neighborShapeChanged(any(), any(), any(), any(), anyInt(), anyInt());
+    }
+
     @Test void noOpDoesNotDirtyTheChunk() {
         var f = new Fixture();
         when(f.section.getBlockState(anyInt(), anyInt(), anyInt())).thenReturn(Blocks.AIR.defaultBlockState());
         assertNull(f.mutation.remove(new BlockPos.MutableBlockPos(1,1,1)));
         verify(f.chunk,never()).setUnsaved(true);
         verifyNoInteractions(f.sky, f.light);
+        verify(f.level, never()).updateNeighborsAt(any(), any());
+        verify(f.level, never()).neighborShapeChanged(any(), any(), any(), any(), anyInt(), anyInt());
     }
 }

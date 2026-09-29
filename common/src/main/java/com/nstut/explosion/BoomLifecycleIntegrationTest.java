@@ -3,6 +3,7 @@ package com.nstut.explosion;
 import com.nstut.testing.BoomServerIntegrationTest;
 import com.nstut.testing.BoomStateDigest;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.TicketType;
@@ -25,6 +26,9 @@ import java.util.Map;
 public final class BoomLifecycleIntegrationTest {
     private static final BlockPos CENTER = new BlockPos(10008, 96, 10008);
     private static final BlockPos CONTROL = CENTER.offset(64, 0, 0);
+    // Keep the shutdown fixture independent of the destructive unload probes.
+    private static final BlockPos PARTIAL_CENTER = CENTER.offset(0, 0, 128);
+    private static final BlockPos PARTIAL_CONTROL = PARTIAL_CENTER.offset(64, 0, 0);
     private static final int RADIUS = 6;
     private static final List<Heightmap.Types> HEIGHTMAPS = List.of(
         Heightmap.Types.WORLD_SURFACE, Heightmap.Types.OCEAN_FLOOR,
@@ -45,14 +49,18 @@ public final class BoomLifecycleIntegrationTest {
     }
 
     private enum Phase { PREPARE, RAY_BASELINE, RAY_UNLOAD, MUTATION_BASELINE,
-        MUTATION_UNLOAD, PARTIAL_PREPARE, PARTIAL_BASELINE, RELOAD, STOPPED }
+        MUTATION_UNLOAD, PARTIAL_PREPARE, PARTIAL_BASELINE, RELOAD, PHYSICS_RELOAD, STOPPED }
 
     public record Partial(String token, String blocks, int air, int processed, int total,
-                          int changed, long[][] heightmaps, int[] skySources) {}
+                          int changed, long[][] heightmaps, int[] skySources,
+                          boolean interiorSupport, boolean sandPendingRemoval,
+                          boolean fastSandTick, boolean controlSandTick) {}
 
     private static final class Run {
         final MinecraftServer server;
         final ServerLevel level;
+        BlockPos center = CENTER;
+        BlockPos control = CONTROL;
         Phase phase = Phase.PREPARE;
         int ticks;
         LevelChunk detached;
@@ -63,6 +71,9 @@ public final class BoomLifecycleIntegrationTest {
         int firstChanged;
         boolean completed;
         Partial saved;
+        int observationRadius;
+        boolean fastSandTickRestored;
+        boolean controlSandTickRestored;
         final java.util.Set<ChunkPos> observedChunks = new java.util.HashSet<>();
 
         Run(MinecraftServer server) { this.server = server; this.level = server.overworld(); }
@@ -76,22 +87,24 @@ public final class BoomLifecycleIntegrationTest {
                     case PREPARE -> {
                         String mode = System.getenv("PERFOMANT_BOOM_LIFECYCLE");
                         if ("reload".equals(mode)) {
+                            center = PARTIAL_CENTER;
+                            control = PARTIAL_CONTROL;
                             saved = BoomStateDigest.JSON.fromJson(Files.readString(
                                 BoomStateDigest.evidence().resolve("lifecycle-partial.json")), Partial.class);
                             require(BoomStateDigest.token().equals(saved.token()), "foreign partial evidence token");
                             require(saved.processed() > 0 && saved.processed() < saved.total(), "saved task was not partial");
-                            holdObservationChunks();
+                            holdObservationChunks(0);
                             move(Phase.RELOAD);
                         } else {
                             require("exercise".equals(mode), "unknown lifecycle mode");
-                            fill(CENTER);
+                            fill(center);
                             move(Phase.RAY_BASELINE);
                         }
                     }
                     case RAY_BASELINE -> {
                         if (!settled()) break;
-                        detached = level.getChunkAt(CENTER);
-                        rays = FastExplosionEngine.create(level, Vec3.atCenterOf(CENTER), 10);
+                        detached = level.getChunkAt(center);
+                        rays = FastExplosionEngine.create(level, Vec3.atCenterOf(center), 10);
                         require(!rays.processUntil(Long.MIN_VALUE), "ray calculation did not yield");
                         raySelected = rays.blockCount();
                         require(raySelected > 0, "ray fixture selected nothing");
@@ -102,35 +115,35 @@ public final class BoomLifecycleIntegrationTest {
                         if (replacement == null) break;
                         // Change only the NEW live chunk. A leaked cache keeps seeing the
                         // detached netherrack instance and selects more positions.
-                        BlockPos.betweenClosed(CENTER.offset(-RADIUS,-RADIUS,-RADIUS),
-                            CENTER.offset(RADIUS,RADIUS,RADIUS)).forEach(p -> level.setBlock(p, Blocks.BEDROCK.defaultBlockState(), 2));
+                        BlockPos.betweenClosed(center.offset(-RADIUS,-RADIUS,-RADIUS),
+                            center.offset(RADIUS,RADIUS,RADIUS)).forEach(p -> level.setBlock(p, Blocks.BEDROCK.defaultBlockState(), 2));
                         require(rays.processUntil(Long.MAX_VALUE), "ray calculation did not finish");
                         require(rays.blockCount() == raySelected, "calculator read a detached chunk after unload/reload");
                         BoomStateDigest.write("lifecycle-ray-unload.json", Map.of("token", BoomStateDigest.token(),
                             "distinctChunk", true, "selectedBefore", raySelected, "selectedAfter", rays.blockCount()));
                         rays = null; detached = null;
-                        fill(CENTER);
+                        fill(center);
                         move(Phase.MUTATION_BASELINE);
                     }
                     case MUTATION_BASELINE -> {
                         if (!settled()) break;
                         startPartial();
-                        detached = level.getChunkAt(CENTER);
-                        mutationPrefix = BoomStateDigest.snapshot(level, CENTER, RADIUS).blocks();
-                        detachedAir = countAir(detached);
+                        detached = level.getChunkAt(center);
+                        mutationPrefix = BoomStateDigest.snapshot(level, center, RADIUS).blocks();
+                        detachedAir = countAir(detached, center);
                         firstChanged = ExplosionScheduler.pendingMutation().changed();
                         move(Phase.MUTATION_UNLOAD);
                     }
                     case MUTATION_UNLOAD -> {
                         LevelChunk replacement = reloadedChunk();
                         if (replacement == null) break;
-                        require(BoomStateDigest.snapshot(level, CENTER, RADIUS).blocks().equals(mutationPrefix),
+                        require(BoomStateDigest.snapshot(level, center, RADIUS).blocks().equals(mutationPrefix),
                             "partial removals lost during chunk unload/save/reload");
                         ExplosionScheduler.tickUntil(server, Long.MIN_VALUE);
                         var progress = ExplosionScheduler.pendingMutation();
                         require(progress != null && progress.changed() > firstChanged, "mutation did not resume");
-                        require(countAir(detached) == detachedAir, "resumed task mutated the detached chunk");
-                        require(countAir(replacement) > detachedAir, "resumed task did not mutate the live replacement");
+                        require(countAir(detached, center) == detachedAir, "resumed task mutated the detached chunk");
+                        require(countAir(replacement, center) > detachedAir, "resumed task did not mutate the live replacement");
                         BoomStateDigest.write("lifecycle-mutation-unload.json", Map.of("token", BoomStateDigest.token(),
                             "distinctChunk", true, "savedPrefixMatched", true, "detachedUnchanged", true,
                             "changedBefore", firstChanged, "changedAfter", progress.changed()));
@@ -141,39 +154,60 @@ public final class BoomLifecycleIntegrationTest {
                     }
                     case PARTIAL_PREPARE -> {
                         if (!settled()) break;
-                        holdObservationChunks();
-                        fill(CENTER); fill(CONTROL);
+                        center = PARTIAL_CENTER;
+                        control = PARTIAL_CONTROL;
+                        holdObservationChunks(2);
+                        fill(center); fill(control);
+                        level.setBlock(center.above(), Blocks.SAND.defaultBlockState(), 3);
+                        level.setBlock(control.above(), Blocks.SAND.defaultBlockState(), 3);
                         move(Phase.PARTIAL_BASELINE);
                     }
                     case PARTIAL_BASELINE -> {
                         if (!settled()) break;
                         requireSameLight("baseline");
-                        require(BoomStateDigest.snapshot(level, CENTER, RADIUS).equals(
-                            BoomStateDigest.snapshot(level, CONTROL, RADIUS)), "partial/control baseline drift");
+                        require(!level.getBlockTicks().hasScheduledTick(center.above(), Blocks.SAND)
+                            && !level.getBlockTicks().hasScheduledTick(control.above(), Blocks.SAND),
+                            "baseline sand placement ticks must have drained while supported");
+                        require(BoomStateDigest.snapshot(level, center, RADIUS).equals(
+                            BoomStateDigest.snapshot(level, control, RADIUS)), "partial/control baseline drift");
                         startPartial();
                         var progress = ExplosionScheduler.pendingMutation();
                         require(progress != null && !completed, "shutdown fixture finished instead of yielding");
                         // Apply exactly the committed removals to an independent fixture
                         // through VANILLA Level#setBlock. Both worlds stop in this tick.
                         int copied = 0;
-                        for (BlockPos pos : BlockPos.betweenClosed(CENTER.offset(-RADIUS,-RADIUS,-RADIUS),
-                            CENTER.offset(RADIUS,RADIUS,RADIUS))) {
-                            BlockPos control = pos.offset(64,0,0);
+                        for (BlockPos pos : BlockPos.betweenClosed(center.offset(-RADIUS,-RADIUS,-RADIUS),
+                            center.offset(RADIUS,RADIUS,RADIUS))) {
+                            BlockPos controlPos = pos.offset(64,0,0);
                             var state = level.getBlockState(pos);
-                            if (state != level.getBlockState(control)) {
+                            if (state != level.getBlockState(controlPos)) {
                                 require(state.isAir(), "unexpected non-removal in partial fixture");
-                                level.setBlock(control, state, 2);
+                                level.setBlock(controlPos, state, 3);
                                 copied++;
                             }
                         }
                         require(copied == progress.changed(), "control removal count mismatch");
-                        require(level.getBlockState(CENTER).isAir(), "partial slice did not remove glowstone");
-                        LevelChunk chunk = level.getChunkAt(CENTER);
+                        require(level.getBlockState(center.above()).is(Blocks.SAND)
+                            && level.getBlockState(control.above()).is(Blocks.SAND), "sand must survive the first slice");
+                        boolean sandPending = ExplosionScheduler.pendingSelectionContains(center.above());
+                        boolean interiorSupport = Arrays.stream(Direction.values()).allMatch(direction ->
+                            ExplosionScheduler.pendingSelectionContains(center.relative(direction)));
+                        require(sandPending && interiorSupport,
+                            "fixture must cover a future candidate above a final-crater interior removal");
+                        boolean fastSandTick = level.getBlockTicks().hasScheduledTick(center.above(), Blocks.SAND);
+                        boolean controlSandTick = level.getBlockTicks().hasScheduledTick(control.above(), Blocks.SAND);
+                        require(controlSandTick, "vanilla control did not schedule falling physics");
+                        require(level.getBlockState(center.below()).is(Blocks.NETHERRACK), "sand landing support was removed");
+                        System.out.println("PERFOMANT_BOOM_PHYSICS_PRE_STOP fastSandTick=" + fastSandTick
+                            + " controlSandTick=" + controlSandTick + " sandPending=" + sandPending);
+                        require(level.getBlockState(center).isAir(), "partial slice did not remove glowstone");
+                        LevelChunk chunk = level.getChunkAt(center);
                         require(chunk.isUnsaved(), "partial mutation not dirty before normal shutdown");
                         checkMetadata(chunk);
-                        var snapshot = BoomStateDigest.snapshot(level, CENTER, RADIUS);
+                        var snapshot = BoomStateDigest.snapshot(level, center, RADIUS);
                         saved = new Partial(BoomStateDigest.token(), snapshot.blocks(), snapshot.air(),
-                            progress.processed(), progress.total(), progress.changed(), heightmaps(chunk), skySources(chunk));
+                            progress.processed(), progress.total(), progress.changed(), heightmaps(chunk), skySources(chunk),
+                            interiorSupport, sandPending, fastSandTick, controlSandTick);
                         BoomStateDigest.write("lifecycle-partial.json", saved);
                         System.out.println("PERFOMANT_BOOM_LIFECYCLE_PARTIAL_STOP_PASS processed=" + progress.processed()
                             + " total=" + progress.total() + " changed=" + progress.changed());
@@ -184,20 +218,59 @@ public final class BoomLifecycleIntegrationTest {
                     case RELOAD -> {
                         if (!settled()) break;
                         require(ExplosionScheduler.pendingTasks() == 0, "fresh JVM inherited scheduler tasks");
-                        var actual = BoomStateDigest.snapshot(level, CENTER, RADIUS);
-                        var control = BoomStateDigest.snapshot(level, CONTROL, RADIUS);
+                        var actual = BoomStateDigest.snapshot(level, center, RADIUS);
+                        var expected = BoomStateDigest.snapshot(level, control, RADIUS);
                         require(actual.blocks().equals(saved.blocks()) && actual.air() == saved.air(),
                             "normal shutdown lost partial removals or completed pending work");
                         requireSameLight("reload");
-                        require(actual.equals(control), "partial-save block/light state differs from vanilla control: " + actual + " / " + control);
+                        require(actual.equals(expected), "partial-save block/light state differs from vanilla control: " + actual + " / " + expected);
                         require(actual.maxBlockLight() == 0, "removed partial-slice glowstone still emits light");
-                        LevelChunk chunk = level.getChunkAt(CENTER);
+                        LevelChunk chunk = level.getChunkAt(center);
                         checkMetadata(chunk);
                         require(Arrays.deepEquals(heightmaps(chunk), saved.heightmaps()), "heightmap persistence drift");
                         require(Arrays.equals(skySources(chunk), saved.skySources()), "skylight source persistence drift");
                         BoomStateDigest.write("lifecycle-persistence.json", Map.of("token", BoomStateDigest.token(),
                             "partialMatched", true, "vanillaBlockLightMatched", true, "metadataMatched", true,
                             "processed", saved.processed(), "total", saved.total(), "changed", saved.changed()));
+                        // FULL-only observation has not run any falling ticks. First prove
+                        // the exact saved prefix/metadata, then allow normal physics to run.
+                        fastSandTickRestored = level.getBlockTicks().hasScheduledTick(center.above(), Blocks.SAND);
+                        controlSandTickRestored = level.getBlockTicks().hasScheduledTick(control.above(), Blocks.SAND);
+                        require(level.getBlockState(center.above()).is(Blocks.SAND)
+                            && level.getBlockState(control.above()).is(Blocks.SAND), "physics ran before saved-prefix verification");
+                        holdObservationChunks(2);
+                        move(Phase.PHYSICS_RELOAD);
+                    }
+                    case PHYSICS_RELOAD -> {
+                        if (!settled()) break;
+                        require(ExplosionScheduler.pendingTasks() == 0, "unfinished destruction resumed after restart");
+                        var actual = BoomStateDigest.snapshot(level, center, RADIUS);
+                        var expected = BoomStateDigest.snapshot(level, control, RADIUS);
+                        int fastSandY = sandY(center), controlSandY = sandY(control);
+                        BoomStateDigest.write("lifecycle-physics.json", Map.ofEntries(
+                            Map.entry("token", BoomStateDigest.token()),
+                            Map.entry("interiorSupport", saved.interiorSupport()),
+                            Map.entry("sandPendingRemoval", saved.sandPendingRemoval()),
+                            Map.entry("fastSandTick", saved.fastSandTick()),
+                            Map.entry("controlSandTick", saved.controlSandTick()),
+                            Map.entry("fastSandTickRestored", fastSandTickRestored),
+                            Map.entry("controlSandTickRestored", controlSandTickRestored),
+                            Map.entry("sourceY", center.getY()+1), Map.entry("landingY", center.getY()),
+                            Map.entry("fastSandY", fastSandY), Map.entry("controlSandY", controlSandY),
+                            Map.entry("tickingTicks", ticks), Map.entry("blockLightMatched", actual.equals(expected))));
+                        System.out.println("PERFOMANT_BOOM_PHYSICS_RELOAD fastSandY=" + fastSandY
+                            + " controlSandY=" + controlSandY + " ticks=" + ticks);
+                        require(fastSandY == center.getY() && controlSandY == center.getY(),
+                            "partial-save sand physics differs from vanilla: fast=" + fastSandY + " control=" + controlSandY);
+                        require(saved.fastSandTick() && saved.controlSandTick()
+                            && fastSandTickRestored && controlSandTickRestored,
+                            "required falling ticks were not scheduled before stop and restored from disk");
+                        require(level.getBlockState(center.above()).isAir()
+                            && level.getBlockState(control.above()).isAir(), "sand remained floating after reload");
+                        requireSameLight("physics-reload");
+                        require(actual.equals(expected), "post-reload physics differs from vanilla block/light state");
+                        checkMetadata(level.getChunkAt(center));
+                        checkMetadata(level.getChunkAt(control));
                         System.out.println("PERFOMANT_BOOM_LIFECYCLE_RELOAD_PASS changed=" + saved.changed());
                         stop(0);
                     }
@@ -210,27 +283,43 @@ public final class BoomLifecycleIntegrationTest {
             }
         }
 
-        void holdObservationChunks() {
-            // DistanceManager.addRegionTicket uses FULL_LEVEL - radius. Radius zero
-            // keeps these 3x3 neighborhoods FULL (not block/entity ticking). Without
-            // observation tickets, the player-free fixture unloads while we wait,
-            // and getBlockState reloads it DURING hashing before light initialization.
-            // These tickets are absent throughout both deliberate unload scenarios.
-            for (BlockPos center : List.of(CENTER, CONTROL)) {
-                ChunkPos origin = new ChunkPos(center);
+        void holdObservationChunks(int radius) {
+            // FULL_LEVEL - radius: 0 keeps chunks FULL without ticking, 2 enables
+            // entities and block ticks. Both neighborhoods always use identical tickets.
+            // No observation tickets exist during the deliberate unload scenarios.
+            if (radius != observationRadius) {
+                for (ChunkPos pos : observedChunks) {
+                    level.getChunkSource().removeRegionTicket(OBSERVATION,pos,observationRadius,pos);
+                }
+                observedChunks.clear();
+                observationRadius = radius;
+            }
+            for (BlockPos fixtureCenter : List.of(center, control)) {
+                ChunkPos origin = new ChunkPos(fixtureCenter);
                 for (int x=-1;x<=1;x++) for (int z=-1;z<=1;z++) {
                     ChunkPos pos = new ChunkPos(origin.x+x,origin.z+z);
-                    if (observedChunks.add(pos)) level.getChunkSource().addRegionTicket(OBSERVATION,pos,0,pos);
+                    if (observedChunks.add(pos)) level.getChunkSource().addRegionTicket(OBSERVATION,pos,radius,pos);
                     level.getChunk(pos.x,pos.z);
                 }
             }
         }
 
+        int sandY(BlockPos center) {
+            int found = Integer.MIN_VALUE;
+            for (int y=center.getY()-RADIUS; y<=center.getY()+RADIUS; y++) {
+                if (level.getBlockState(new BlockPos(center.getX(),y,center.getZ())).is(Blocks.SAND)) {
+                    require(found == Integer.MIN_VALUE, "sand fixture duplicated a block");
+                    found = y;
+                }
+            }
+            return found;
+        }
+
         void requireSameLight(String stage) {
             var differences = new java.util.ArrayList<Map<String,Object>>();
             int count = 0;
-            for (BlockPos pos : BlockPos.betweenClosed(CENTER.offset(-RADIUS,-RADIUS,-RADIUS),
-                CENTER.offset(RADIUS,RADIUS,RADIUS))) {
+            for (BlockPos pos : BlockPos.betweenClosed(center.offset(-RADIUS,-RADIUS,-RADIUS),
+                center.offset(RADIUS,RADIUS,RADIUS))) {
                 BlockPos other = pos.offset(64,0,0);
                 for (LightLayer layer : LightLayer.values()) {
                     int actual = level.getBrightness(layer,pos), control = level.getBrightness(layer,other);
@@ -250,7 +339,7 @@ public final class BoomLifecycleIntegrationTest {
         void move(Phase next) { phase = next; ticks = 0; }
 
         LevelChunk reloadedChunk() {
-            ChunkPos pos = new ChunkPos(CENTER);
+            ChunkPos pos = new ChunkPos(center);
             // getChunkNow does not issue an UNKNOWN ticket. Let normal server ticks
             // remove the holder; acquiring early could resurrect the same instance.
             if (level.getChunkSource().getChunkNow(pos.x,pos.z) != null) return null;
@@ -259,19 +348,19 @@ public final class BoomLifecycleIntegrationTest {
         }
 
         void startPartial() {
-            LevelChunk chunk = level.getChunkAt(CENTER);
+            LevelChunk chunk = level.getChunkAt(center);
             level.getChunkSource().save(true);
             require(!chunk.isUnsaved(), "fixture must be clean before partial mutation");
             completed = false;
             level.getRandom().setSeed(0x51CE5L);
-            ExplosionScheduler.scheduleTracked(level, Vec3.atCenterOf(CENTER), 10, metrics -> completed = true);
+            ExplosionScheduler.scheduleTracked(level, Vec3.atCenterOf(center), 10, metrics -> completed = true);
             for (int i=0; i<10000 && ExplosionScheduler.pendingMutation() == null && !completed; i++) {
                 ExplosionScheduler.tickUntil(server, Long.MIN_VALUE);
             }
             var progress = ExplosionScheduler.pendingMutation();
             require(progress != null && progress.processed() > 0 && progress.processed() < progress.total()
                 && progress.changed() > 0 && !completed, "could not suspend inside a mutated chunk");
-            require(progress.chunk().equals(new ChunkPos(CENTER)), "mutation fixture escaped its single chunk");
+            require(progress.chunk().equals(new ChunkPos(center)), "mutation fixture escaped its single chunk");
             require(chunk.isUnsaved(), "successful writes did not dirty an otherwise clean chunk");
         }
 
@@ -289,7 +378,7 @@ public final class BoomLifecycleIntegrationTest {
         void stop(int code) {
             if (phase == Phase.STOPPED) return;
             phase = Phase.STOPPED;
-            for (ChunkPos pos : observedChunks) level.getChunkSource().removeRegionTicket(OBSERVATION,pos,0,pos);
+            for (ChunkPos pos : observedChunks) level.getChunkSource().removeRegionTicket(OBSERVATION,pos,observationRadius,pos);
             observedChunks.clear();
             Thread serverThread = Thread.currentThread();
             server.halt(false);
@@ -311,10 +400,10 @@ public final class BoomLifecycleIntegrationTest {
         }
     }
 
-    private static int countAir(LevelChunk chunk) {
+    private static int countAir(LevelChunk chunk, BlockPos center) {
         int count = 0;
-        for (BlockPos pos : BlockPos.betweenClosed(CENTER.offset(-RADIUS,-RADIUS,-RADIUS),
-            CENTER.offset(RADIUS,RADIUS,RADIUS))) if (chunk.getBlockState(pos).isAir()) count++;
+        for (BlockPos pos : BlockPos.betweenClosed(center.offset(-RADIUS,-RADIUS,-RADIUS),
+            center.offset(RADIUS,RADIUS,RADIUS))) if (chunk.getBlockState(pos).isAir()) count++;
         return count;
     }
 

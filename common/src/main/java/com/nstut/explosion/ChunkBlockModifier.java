@@ -48,8 +48,9 @@ public final class ChunkBlockModifier {
         }
 
         /**
-         * Removes a block without neighbor/drop processing. Returns the previous state, or
-         * {@code null} if there was nothing to change.
+         * Removes a block and completes its vanilla neighbor/shape notifications before
+         * returning. General explosion loot is not processed here. Returns the previous
+         * state, or {@code null} if there was nothing to change.
          */
         public BlockState remove(BlockPos.MutableBlockPos pos) {
             int y = pos.getY();
@@ -105,21 +106,33 @@ public final class ChunkBlockModifier {
             // contents. Calling it here is both more correct and cheaper than full setBlock.
             oldState.onRemove(level, pos, air, false);
 
-            // Level.markAndNotifyBlock normally reaches this hook after the chunk write.
-            // It is what keeps the persistent POI index in sync for beds, bells and
-            // villager workstations. Raw section writes must not leave ghost POIs behind.
-            level.onBlockStateChange(pos, oldState, air);
-
             changedBySection
                 .computeIfAbsent(sectionIndex, ignored -> new ShortOpenHashSet())
                 .add(packLocal(localX, localY, localZ));
+
+            // Mirror Level#setBlock(flags=3), including the post-onRemove state check.
+            // A selected block is NOT absent until its removal actually commits. In
+            // particular, sand above an interior support can survive this slice. These
+            // notifications must run before any deadline check/save, not at the final
+            // crater boundary: vanilla's resulting scheduled ticks are then saveable.
+            if (chunk.getBlockState(pos) == air) {
+                BlockPos physicsPos = pos.immutable();
+                level.updateNeighborsAt(physicsPos, oldState.getBlock());
+                oldState.updateIndirectNeighbourShapes(level, physicsPos, 2, 511);
+                air.updateNeighbourShapes(level, physicsPos, 2, 511);
+                air.updateIndirectNeighbourShapes(level, physicsPos, 2, 511);
+
+                // Keep the persistent POI index synchronized, as Level#setBlock does
+                // after its neighbor/shape notifications.
+                level.onBlockStateChange(physicsPos, oldState, air);
+            }
 
             return oldState;
         }
 
         /**
-         * Publishes this slice's compact section packets. Save/light bookkeeping is
-         * already complete for every write, even before this method is called.
+         * Publishes this slice's compact section packets. Save/light bookkeeping and
+         * neighbor/shape dispatch are already complete for every successful write.
          * The scheduler discards the context before returning control to Minecraft.
          */
         public void finish() {

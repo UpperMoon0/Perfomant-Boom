@@ -100,7 +100,11 @@ class HarnessTests(unittest.TestCase):
             'lifecycle-ray-unload.json': dict(token='run', distinctChunk=True, selectedBefore=8, selectedAfter=8),
             'lifecycle-mutation-unload.json': dict(token='run', distinctChunk=True, savedPrefixMatched=True,
                 detachedUnchanged=True, changedBefore=8, changedAfter=16),
-            'lifecycle-partial.json': dict(token='run', processed=8, total=500, changed=8),
+            'lifecycle-partial.json': dict(token='run', processed=8, total=500, changed=8,
+                interiorSupport=True, sandPendingRemoval=True, fastSandTick=True, controlSandTick=True),
+            'lifecycle-physics.json': dict(token='run', interiorSupport=True, sandPendingRemoval=True,
+                fastSandTick=True, controlSandTick=True, fastSandTickRestored=True, controlSandTickRestored=True,
+                blockLightMatched=True, tickingTicks=40, sourceY=97, landingY=96, fastSandY=96, controlSandY=96),
             'lifecycle-persistence.json': dict(token='run', processed=8, total=500, changed=8,
                 partialMatched=True, vanillaBlockLightMatched=True, metadataMatched=True),
         }
@@ -143,6 +147,33 @@ class HarnessTests(unittest.TestCase):
             records['lifecycle-persistence.json']['vanillaBlockLightMatched']=False
             (root/'lifecycle-persistence.json').write_text(json.dumps(records['lifecycle-persistence.json']))
             with self.assertRaisesRegex(ValueError,'partial-mutation'): live.verify_lifecycle_evidence(root,'run')
+
+    def test_lifecycle_evidence_requires_saved_and_executed_physics(self):
+        for field, bad in [('fastSandTick', False), ('controlSandTick', False),
+                           ('fastSandTickRestored', False), ('controlSandTickRestored', False),
+                           ('sandPendingRemoval', False), ('interiorSupport', False),
+                           ('blockLightMatched', False), ('tickingTicks', 39),
+                           ('fastSandY', 97), ('controlSandY', 97), ('sourceY', 96)]:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp); records=self.lifecycle_fixture(root)
+                records['lifecycle-physics.json'][field]=bad
+                (root/'lifecycle-physics.json').write_text(json.dumps(records['lifecycle-physics.json']))
+                with self.assertRaisesRegex(ValueError,'neighbor/shape physics'):
+                    live.verify_lifecycle_evidence(root,'run')
+
+    def test_lifecycle_evidence_rejects_unrecorded_pre_stop_physics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); records=self.lifecycle_fixture(root)
+            del records['lifecycle-partial.json']['fastSandTick']
+            (root/'lifecycle-partial.json').write_text(json.dumps(records['lifecycle-partial.json']))
+            with self.assertRaisesRegex(ValueError,'neighbor/shape physics'):
+                live.verify_lifecycle_evidence(root,'run')
+
+    def test_lifecycle_evidence_requires_physics_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); self.lifecycle_fixture(root)
+            (root/'lifecycle-physics.json').unlink()
+            with self.assertRaises(OSError): live.verify_lifecycle_evidence(root,'run')
 
     def test_incomplete_evidence_cannot_produce_summary(self):
         with tempfile.TemporaryDirectory() as tmp:
