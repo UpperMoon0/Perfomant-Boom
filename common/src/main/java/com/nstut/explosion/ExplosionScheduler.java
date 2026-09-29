@@ -167,7 +167,10 @@ public final class ExplosionScheduler {
         private final ServerLevel level;
         private final Vec3 center;
         private final float power;
-        private final FastExplosionEngine.IncrementalCalculation calculation;
+        // Created only when this task reaches the head of TASK_QUEUE. Creating the
+        // calculator consumes vanilla's 1,352 ray-strength draws from Level.random;
+        // queued tasks must not reserve those draws before the active task shuffles.
+        private FastExplosionEngine.IncrementalCalculation calculation;
         private final Consumer<ExplosionMetrics> completion;
         private final LongOpenHashSet queuedLightChecks = new LongOpenHashSet();
         private final Long2ObjectOpenHashMap<ChunkBlockModifier.MutationContext> sliceMutations =
@@ -205,7 +208,12 @@ public final class ExplosionScheduler {
             this.center = center;
             this.power = power;
             this.completion = completion;
-            this.calculation = FastExplosionEngine.create(level, center, power);
+        }
+
+        private void initializeCalculation() {
+            if (calculation == null) {
+                calculation = FastExplosionEngine.create(level, center, power);
+            }
         }
 
         private void recordSlice(long elapsedNanos) {
@@ -235,6 +243,10 @@ public final class ExplosionScheduler {
             if (!started) {
                 started = true;
                 beginExplosionEffects();
+                // Scheduling is intentionally RNG-free. Only the active queue head may
+                // reserve ray strengths, so later explosions cannot interleave their
+                // level-RNG draws before this task's vanilla affected-position shuffle.
+                initializeCalculation();
             }
 
             if (!entityDamageFinished) {

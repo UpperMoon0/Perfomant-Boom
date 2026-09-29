@@ -29,6 +29,36 @@ class FastExplosionEngineTest {
     }
 
     @Test
+    void queuedExplosionsDoNotReserveLaterRayRngBeforeActiveShuffle() throws Exception {
+        var level = org.mockito.Mockito.mock(net.minecraft.server.level.ServerLevel.class);
+        var actual = RandomSource.create(0x51A77E5EEDL);
+        var expected = RandomSource.create(0x51A77E5EEDL);
+        org.mockito.Mockito.when(level.getRandom()).thenReturn(actual);
+
+        var queueField = ExplosionScheduler.class.getDeclaredField("TASK_QUEUE");
+        queueField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        var queue = (java.util.Queue<Object>) queueField.get(null);
+        var serverField = ExplosionScheduler.class.getDeclaredField("activeServer");
+        serverField.setAccessible(true);
+
+        queue.clear();
+        serverField.set(null, null);
+        try {
+            ExplosionScheduler.scheduleTracked(level, new Vec3(0.5D, 96.5D, 0.5D), 10.0F, null);
+            ExplosionScheduler.scheduleTracked(level, new Vec3(32.5D, 96.5D, 0.5D), 6.0F, null);
+
+            assertEquals(2, queue.size());
+            org.mockito.Mockito.verify(level, org.mockito.Mockito.never()).getRandom();
+            assertEquals(expected.nextLong(), actual.nextLong(),
+                "enqueuing later explosions must not consume Level.random before the active task runs");
+        } finally {
+            queue.clear();
+            serverField.set(null, null);
+        }
+    }
+
+    @Test
     void runtimeReservesVanillaLevelRandomRaySequence() {
         var level = org.mockito.Mockito.mock(net.minecraft.server.level.ServerLevel.class);
         var actual = RandomSource.create(0xB00B5EEDL);
