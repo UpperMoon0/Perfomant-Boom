@@ -4,25 +4,22 @@ import dev.architectury.platform.forge.EventBuses;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 
-import com.nstut.perfomantboom.ExampleMod;
+import com.nstut.perfomantboom.PerfomantBoom;
 import com.nstut.testing.BoomClientIntegrationTest;
 import com.nstut.perfomantboom.forge.gametest.BoomForgeGameTests;
 import net.minecraftforge.event.RegisterGameTestsEvent;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.fml.DistExecutor;
 
-@Mod(ExampleMod.MOD_ID)
-public final class ExampleModForge {
-    public ExampleModForge() {
-        // Submit our event bus to let Architectury API register our content on the right time.
+@Mod(PerfomantBoom.MOD_ID)
+public final class PerfomantBoomForge {
+    public PerfomantBoomForge() {
+        // Register the Forge event bus before wiring Boom lifecycle handlers.
         var modEventBus = FMLJavaModLoadingContext.get().getModEventBus();
-        EventBuses.registerModEventBus(ExampleMod.MOD_ID, modEventBus);
+        EventBuses.registerModEventBus(PerfomantBoom.MOD_ID, modEventBus);
         modEventBus.addListener(this::registerGameTests);
 
-        // Run our common setup.
-        ExampleMod.init();
-
-        // Register events on the Forge bus
+        // Wire explosion scheduling, commands and client verification.
         net.minecraftforge.common.MinecraftForge.EVENT_BUS.addListener(this::onServerTick);
         net.minecraftforge.common.MinecraftForge.EVENT_BUS.addListener(this::onRegisterCommands);
         DistExecutor.safeRunWhenOn(Dist.CLIENT, () -> ClientHooks::register);
@@ -30,9 +27,9 @@ public final class ExampleModForge {
 
     private void onServerTick(net.minecraftforge.event.TickEvent.ServerTickEvent event) {
         if (event.phase == net.minecraftforge.event.TickEvent.Phase.START) {
-            ExampleMod.onServerTickStart(event.getServer());
+            PerfomantBoom.onServerTickStart(event.getServer());
         } else {
-            ExampleMod.onServerTick(event.getServer());
+            PerfomantBoom.onServerTick(event.getServer());
         }
     }
 
@@ -61,6 +58,6 @@ public final class ExampleModForge {
     }
 
     private void onRegisterCommands(net.minecraftforge.event.RegisterCommandsEvent event) {
-        ExampleMod.registerCommands(event.getDispatcher());
+        PerfomantBoom.registerCommands(event.getDispatcher());
     }
 }

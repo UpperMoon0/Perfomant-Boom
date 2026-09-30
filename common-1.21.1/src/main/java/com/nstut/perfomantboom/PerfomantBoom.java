@@ -10,14 +10,11 @@ import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public final class ExampleMod {
+public final class PerfomantBoom {
     public static final String MOD_ID = "perfomant_boom";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
-    private ExampleMod() {
-    }
-
-    public static void init() {
+    private PerfomantBoom() {
     }
 
     public static void onServerTick(MinecraftServer server) {
@@ -27,7 +24,7 @@ public final class ExampleMod {
     public static void registerCommands(com.mojang.brigadier.CommandDispatcher<net.minecraft.commands.CommandSourceStack> dispatcher) {
 
         dispatcher.register(Commands.literal("boom")
-            .requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS))
+            .requires(source -> source.hasPermission(2))
             .then(Commands.argument("radius", FloatArgumentType.floatArg(1.0f, 500.0f))
                 .executes(context -> {
                     float radius = FloatArgumentType.getFloat(context, "radius");

@@ -14,7 +14,7 @@
   "environment": "*",
   "entrypoints": {
     "main": [
-      "com.nstut.perfomantboom.fabric.ExampleModFabric"
+      "com.nstut.perfomantboom.fabric.PerfomantBoomFabric"
     ]
   },
   "depends": {
