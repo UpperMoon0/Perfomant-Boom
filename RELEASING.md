@@ -32,7 +32,7 @@ The shared checks now include Forge GameTest and frozen real-client/persistence 
 
 ## Project-page documentation
 
-Use [CURSEFORGE.md](CURSEFORGE.md) as the player-facing description and [icon.png](icon.png) as the project-page icon. Keep the description aligned with [COMPATIBILITY.md](docs/COMPATIBILITY.md), and link version notes from [CHANGELOG.md](CHANGELOG.md). The upload workflow publishes files; it does not synchronize the project description or icon. Update those manually in the project editor when needed.
+Use [CURSEFORGE.md](CURSEFORGE.md) as the player-facing description and [icon.png](icon.png) as the project-page icon. Keep the description aligned with [COMPATIBILITY.md](docs/COMPATIBILITY.md), and link the relevant per-version notes in [changelog/](changelog/). The upload workflow publishes files; it does not synchronize the project description or icon. Update those manually in the project editor when needed.
 
 Set the public project license to MIT, matching [LICENSE](LICENSE) and every loader target.
 

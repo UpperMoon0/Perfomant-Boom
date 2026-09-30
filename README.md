@@ -87,7 +87,7 @@ Runnable JARs are in each loader module's `build/libs`. Legacy `fabric` and `for
 - [Usage guide](USAGE.md)
 - [Integration guide](INTEGRATION.md) and [API reference](docs/API_REFERENCE.md)
 - [Architecture](docs/ARCHITECTURE.md), [source audit](docs/multiversion-audit.md) and [contributing](CONTRIBUTING.md)
-- [Testing](TESTING.md), [releasing](RELEASING.md) and [changelog](CHANGELOG.md)
+- [Testing](TESTING.md), [releasing](RELEASING.md) and [versioned release notes](changelog/)
 - [CurseForge description](CURSEFORGE.md) and [project icon](icon.png)
 
 Report problems in [GitHub Issues](https://github.com/UpperMoon0/Perfomant-Boom/issues), including game/loader/Boom versions, command or consuming mod, reproduction steps and logs. Distinguish server tick delays from client rendering problems.
