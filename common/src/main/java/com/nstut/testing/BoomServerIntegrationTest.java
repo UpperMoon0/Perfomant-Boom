@@ -17,6 +17,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import java.util.*;
+import java.lang.management.ManagementFactory;
 
 /** Real Level.explode versus the production scheduler, with exact seeded craters and
  * a network command acknowledgement of every client block/light digest. No timing assertions.
@@ -33,6 +34,10 @@ public final class BoomServerIntegrationTest {
     private static final List<Trial> TRIALS=trials();
     private static final List<Map<String,Object>> samples=new ArrayList<>();
     private static final List<Double> tickMs=new ArrayList<>();
+    private static final List<Double> tickCpuMs=new ArrayList<>();
+    private static final List<Double> tickAllocatedKiB=new ArrayList<>();
+    private static com.sun.management.ThreadMXBean resourceCounters;
+    private static long tickCpuStart, tickAllocationStart;
     private static final Map<String,BoomStateDigest.Snapshot> paired=new HashMap<>();
     private static MinecraftServer activeServer;
     private static ServerPlayer observer;
@@ -81,14 +86,32 @@ public final class BoomServerIntegrationTest {
             activeServer=server; observer=null; phase=Phase.PREPARE; next=0; ticks=0;
             ready=false; begun=false; clientDone=false; stopping=false; samples.clear(); paired.clear(); tickMs.clear();
         }
+        if (resourceCounters==null) {
+            var base=ManagementFactory.getThreadMXBean();
+            if (!(base instanceof com.sun.management.ThreadMXBean counters)
+                    || !counters.isCurrentThreadCpuTimeSupported() || !counters.isThreadAllocatedMemorySupported())
+                throw new IllegalStateException("Live benchmark requires CPU and allocation counters");
+            resourceCounters=counters;
+            counters.setThreadCpuTimeEnabled(true);
+            counters.setThreadAllocatedMemoryEnabled(true);
+            BoomStateDigest.write("resource-environment.json",Map.of(
+                "javaVersion",System.getProperty("java.version"),"javaVm",System.getProperty("java.vm.name"),
+                "os",System.getProperty("os.name"),"architecture",System.getProperty("os.arch"),
+                "logicalProcessors",Runtime.getRuntime().availableProcessors(),
+                "maxHeapBytes",Runtime.getRuntime().maxMemory()));
+        }
+        tickCpuStart=resourceCounters.getCurrentThreadCpuTime();
+        tickAllocationStart=resourceCounters.getCurrentThreadAllocatedBytes();
         tickStart=System.nanoTime();
     }
     public static void tick(MinecraftServer server) {
         if (!isArmed()) return;
         // Measured START -> END hook duration excludes the oracle/hash/file-I/O below.
         double observed=(System.nanoTime()-tickStart)/1_000_000.0;
+        double observedCpu=(resourceCounters.getCurrentThreadCpuTime()-tickCpuStart)/1_000_000.0;
+        double observedAllocated=(resourceCounters.getCurrentThreadAllocatedBytes()-tickAllocationStart)/1024.0;
         boolean measure=phase==Phase.RUN || phase==Phase.ENGINE || phase==Phase.SETTLE;
-        double inlineWork=0;
+        double inlineWork=0, inlineCpu=0, inlineAllocated=0;
         try {
             ServerLevel level=server.overworld();
             ticks++;
@@ -130,7 +153,9 @@ public final class BoomServerIntegrationTest {
                     drops(level,!t.scenario().contains("no-drops"));
                     // Test-only isolated worlds; identical ray RNG sequence for BOTH implementations.
                     level.getRandom().setSeed(t.seed());
-                    metrics=null; tickMs.clear();
+                    metrics=null; tickMs.clear(); tickCpuMs.clear(); tickAllocatedKiB.clear();
+                    long callCpu=resourceCounters.getCurrentThreadCpuTime();
+                    long callAllocated=resourceCounters.getCurrentThreadAllocatedBytes();
                     explosionStart=System.nanoTime();
                     if (t.fast()) {
                         ExplosionScheduler.scheduleTracked(level,Vec3.atCenterOf(t.center()),t.power(),m -> metrics=m);
@@ -141,6 +166,8 @@ public final class BoomServerIntegrationTest {
                         activeWorkMs=(System.nanoTime()-explosionStart)/1_000_000.0;
                         inlineWork=activeWorkMs; scheduleWallMs=activeWorkMs; phase=Phase.SETTLE;
                     }
+                    inlineCpu=(resourceCounters.getCurrentThreadCpuTime()-callCpu)/1_000_000.0;
+                    inlineAllocated=(resourceCounters.getCurrentThreadAllocatedBytes()-callAllocated)/1024.0;
                     ticks=0;
                 }
                 case ENGINE -> {
@@ -178,7 +205,11 @@ public final class BoomServerIntegrationTest {
             System.err.println("PERFOMANT_BOOM_E2E_SERVER_FAIL "+e);
             e.printStackTrace();
         } finally {
-            if (measure) tickMs.add(observed+inlineWork);
+            if (measure) {
+                tickMs.add(observed+inlineWork);
+                tickCpuMs.add(observedCpu+inlineCpu);
+                tickAllocatedKiB.add(observedAllocated+inlineAllocated);
+            }
         }
     }
     private static void stopServer(MinecraftServer server) {
@@ -234,6 +265,10 @@ public final class BoomServerIntegrationTest {
         sample.put("activeWorkMs",activeWorkMs); sample.put("schedulerCompletionWallMs",scheduleWallMs);
         sample.put("clientAcknowledgedWallMs",(System.nanoTime()-explosionStart)/1_000_000.0);
         sample.put("observedServerTickMs",List.copyOf(tickMs));
+        sample.put("observedServerThreadCpuMs",List.copyOf(tickCpuMs));
+        sample.put("observedServerThreadAllocatedKiB",List.copyOf(tickAllocatedKiB));
+        sample.put("totalObservedServerThreadCpuMs",tickCpuMs.stream().mapToDouble(Double::doubleValue).sum());
+        sample.put("totalObservedServerThreadAllocatedKiB",tickAllocatedKiB.stream().mapToDouble(Double::doubleValue).sum());
         sample.put("maxObservedServerTickMs",tickMs.stream().mapToDouble(Double::doubleValue).max().orElse(0));
         if (metrics!=null) sample.put("scheduler",metrics);
         samples.add(sample);

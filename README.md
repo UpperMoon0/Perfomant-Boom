@@ -11,6 +11,18 @@ Large explosions spread across server ticks, plus a Java terrain library for oth
 
 Boom does not automatically replace TNT, creepers or explosions from other mods. Integrations must explicitly call its API. Boom's command works as a standalone feature.
 
+## Performance vs vanilla
+
+Boom spreads explosion calculation and block changes across server ticks, giving the server opportunities to advance other work between slices. The scheduler targets **4 ms per tick**, with cooperative checks; an expensive operation can exceed that target. Total work and completion time can still increase.
+
+![Perfomant Boom v1.1.2 versus vanilla in a real Minecraft 1.20.1 dedicated server and graphical client: active work, heaviest server tick, server-thread CPU work and allocated memory. Lower is better; whiskers show quartiles.](docs/images/benchmark-live-v1.1.2.png)
+
+This **30 September 2026 real-game benchmark** uses actual vanilla explosions and Boom's production scheduler, with matching seeds, alternating order, three warmup pairs and five measured pairs per loader. The chart compares **power-10 explosions with drops disabled on both sides**. Exact crater shape, server/client block and light state, clean shutdown and save/reload checks must pass before results can be plotted.
+
+For players, the heaviest server tick shows how work distribution affects stalls. For developers, CPU work and memory allocations show resource costs alongside elapsed time. These are observed server-thread measurements, including normal tick work and aftermath; **allocated memory is not peak RAM usage**. CPU readings on this Windows host have coarse granularity. Results cover the tested 1.20.1 loaders and fixture, with no universal performance or FPS claim.
+
+Read the [raw benchmark data, machine details and reproduction steps](docs/BENCHMARKS.md) and [live-test measurement definitions](TESTING.md#evidence-and-performance-interpretation).
+
 ## Try it
 
 In a disposable test world with cheats enabled, run:
@@ -19,7 +31,7 @@ In a disposable test world with cheats enabled, run:
 /boom 4
 ```
 
-The explosion is queued at the command source position. Power accepts **1–500**, including decimals. It is explosion strength, not a guaranteed crater radius: block resistance and terrain affect the result. Game-master/operator permission is required (level 2 on legacy targets).
+The explosion is queued at the command source position. Power accepts **1â€“500**, including decimals. It is explosion strength, not a guaranteed crater radius: block resistance and terrain affect the result. Game-master/operator permission is required (level 2 on legacy targets).
 
 To choose a position explicitly:
 

@@ -9,6 +9,7 @@ from ctypes import wintypes
 import json
 import hashlib
 import statistics
+import math
 import os
 from pathlib import Path
 import queue
@@ -496,8 +497,11 @@ def summarize(evidence: Path) -> list[dict]:
     summary = []
     for (scenario, fast), values in grouped.items():
         row = {'scenario': scenario, 'engine': 'fast' if fast else 'vanilla', 'samples': len(values)}
-        for field in ('activeWorkMs', 'maxObservedServerTickMs', 'clientAcknowledgedWallMs'):
+        for field in ('activeWorkMs', 'maxObservedServerTickMs', 'clientAcknowledgedWallMs',
+                      'totalObservedServerThreadCpuMs', 'totalObservedServerThreadAllocatedKiB'):
             raw = sorted(v[0][field] for v in values)
+            if any(not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0 for value in raw):
+                raise ValueError(f'Invalid resource/timing evidence: {field}')
             row[field] = {'median': statistics.median(raw), 'min': min(raw), 'max': max(raw),
                           'q1': raw[(len(raw)-1)//4], 'q3': raw[(3*(len(raw)-1)+3)//4]}
         row['maxObservedFrameGapMs'] = max(v[1]['maxObservedFrameGapMs'] for v in values)

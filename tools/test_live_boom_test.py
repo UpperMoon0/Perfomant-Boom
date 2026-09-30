@@ -198,4 +198,38 @@ class HarnessTests(unittest.TestCase):
             p=Path(tmp); (p/'server-samples.json').write_text('[]')
             with self.assertRaises(ValueError): live.summarize(p)
 
+    def resource_summary_fixture(self, root):
+        samples=[]
+        for index in range(34):
+            sample={'trial': {'index': index, 'scenario': 'no-drops', 'fast': bool(index%2), 'warmup': index<24},
+                    'authoritative': {'air': 10}, 'activeWorkMs': 1, 'maxObservedServerTickMs': 2,
+                    'clientAcknowledgedWallMs': 3, 'totalObservedServerThreadCpuMs': 4,
+                    'totalObservedServerThreadAllocatedKiB': 100}
+            samples.append(sample)
+            (root/f'client-sample-{index:02d}.json').write_text(json.dumps(
+                {'actual': sample['authoritative'], 'postConvergenceFrames': 2, 'maxObservedFrameGapMs': 5}))
+        (root/'server-samples.json').write_text(json.dumps(samples))
+        return samples
+
+    def test_resource_summary_preserves_cpu_and_allocation_measurements(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); self.resource_summary_fixture(root)
+            rows=live.summarize(root)
+            self.assertEqual(len(rows),2)
+            for row in rows:
+                self.assertEqual(row['samples'],5)
+                self.assertEqual(row['totalObservedServerThreadCpuMs']['median'],4)
+                self.assertEqual(row['totalObservedServerThreadAllocatedKiB']['median'],100)
+
+    def test_resource_summary_rejects_missing_negative_and_nonfinite_counters(self):
+        for invalid in (None, -1, float('nan'), float('inf')):
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp); samples=self.resource_summary_fixture(root)
+                if invalid is None:
+                    del samples[24]['totalObservedServerThreadCpuMs']
+                else:
+                    samples[24]['totalObservedServerThreadCpuMs']=invalid
+                (root/'server-samples.json').write_text(json.dumps(samples))
+                with self.assertRaises((ValueError,KeyError)): live.summarize(root)
+
 if __name__=='__main__': unittest.main()
