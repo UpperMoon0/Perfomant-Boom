@@ -11,7 +11,7 @@ Versioned release notes live in `changelog/`. Their presence describes planned/s
 
 ## 1.1.2
 
-[Full notes](changelog/1.1.2.md): namespace loader/bootstrap classes to avoid Java module split-package collisions with other NsTut mods while preserving the public Boom API packages.
+[Full notes](changelog/1.1.2.md): unique entry-point packages allow Forge to load Boom alongside Meconomy.
 
 ## 1.1.1
 
