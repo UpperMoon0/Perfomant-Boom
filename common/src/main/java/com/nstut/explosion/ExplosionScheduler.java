@@ -1,6 +1,6 @@
 package com.nstut.explosion;
 
-import com.nstut.ExampleMod;
+import com.nstut.perfomantboom.PerfomantBoom;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
@@ -270,7 +270,7 @@ public final class ExplosionScheduler {
 
                 calculationFinished = true;
                 destructionOrder = vanillaDestructionOrder(calculation, level.getRandom());
-                ExampleMod.LOGGER.info(
+                PerfomantBoom.LOGGER.info(
                     "Explosion calculation complete: {} non-air blocks / {} vanilla affected positions from {} ray samples at {} (power {})",
                     calculation.blockCount(),
                     destructionOrder.size(),
@@ -542,7 +542,7 @@ public final class ExplosionScheduler {
 
             double workMs = workNanos / 1_000_000.0D;
             double maxSliceMs = maxSliceNanos / 1_000_000.0D;
-            ExampleMod.LOGGER.info(
+            PerfomantBoom.LOGGER.info(
                 "Explosion finished: {} blocks changed at {} (power {}) in {}ms wall-clock, {}ms active work, max {}ms/tick",
                 actualChangedBlocks,
                 center,

@@ -32,6 +32,6 @@ After republishing the same version, refresh the consumer's dependencies before 
 
 ## Documentation and releases
 
-Update [CHANGELOG.md](CHANGELOG.md), the appropriate `changelog/<version>.md`, compatibility notes and [CURSEFORGE.md](CURSEFORGE.md) for user-visible changes. Version changes on `main` can trigger publication; follow [RELEASING.md](RELEASING.md). Routine docs work does not require a version bump.
+Update the appropriate `changelog/<version>.md`, compatibility notes and [CURSEFORGE.md](CURSEFORGE.md) for user-visible changes. Version changes on `main` can trigger publication; follow [RELEASING.md](RELEASING.md). Routine docs work does not require a version bump.
 
 Public descriptions must keep the limits on loot, hooks, persistence and performance claims. Contributions are distributed under the repository's [MIT License](LICENSE). Keep loader metadata consistent with that license.
