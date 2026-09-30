@@ -1,6 +1,6 @@
-# Real-game benchmark against vanilla
+# Archived v1.1.2 real-game benchmark against vanilla
 
-![Perfomant Boom v1.1.3 real-game time, CPU and memory comparison](images/benchmark-live-v1.1.3.png)
+![Perfomant Boom v1.1.2 real-game time, CPU and memory comparison](images/benchmark-live-v1.1.2.png)
 
 These measurements use a **real Minecraft 1.20.1 dedicated server and graphical client**,
 not a synthetic block view or mock world. The same loader/runtime executes both actual
@@ -11,13 +11,13 @@ The displayed scenario is **power 10 with drops disabled for both engines**.
 
 | Loader / engine | Active work (ms) | Heaviest tick (ms) | Thread CPU (ms) | Allocated (MiB) |
 | --- | --- | --- | --- | --- |
-| Fabric / Vanilla | 42.839 | 43.926 | 46.875 | 7.536 |
-| Fabric / Boom | 16.890 | 8.315 | 31.250 | 5.392 |
-| Forge / Vanilla | 62.752 | 63.740 | 46.875 | 7.967 |
-| Forge / Boom | 24.515 | 9.730 | 15.625 | 5.507 |
+| Fabric / Vanilla | 77.229 | 78.108 | 15.625 | 7.422 |
+| Fabric / Boom | 53.811 | 16.403 | 15.625 | 6.299 |
+| Forge / Vanilla | 62.474 | 63.072 | 31.250 | 7.991 |
+| Forge / Boom | 40.694 | 16.783 | 15.625 | 6.218 |
 
 
-In this snapshot, Boom lowers the median heaviest tick by 81–85% and server-thread allocations by 28–31% against vanilla. CPU medians are lower, but coarse counter resolution and sample spread prevent a precise CPU-saving claim. Completion latency can still rise because work is spread across ticks.
+In this snapshot, Boom lowers the median heaviest tick on both loaders. Fabric records the same median CPU reading for both engines; Forge records lower median CPU for Boom, but coarse counter resolution and overlapping quartiles prevent a precise CPU-saving claim. Memory allocations are lower for Boom in these fixtures. Completion latency can still rise because work is spread across ticks.
 
 Bars show the median of five measured trials per engine and loader. Whiskers show
 q1 and q3 (the second and fourth sorted samples). They describe the spread of this
@@ -63,7 +63,7 @@ latency or FPS. Scheduler wall completion time is also retained per trial.
 
 ## Test environment and provenance
 
-- Measured **30 September 2026**, using Perfomant Boom **v1.1.3**.
+- Measured **30 September 2026**, using Perfomant Boom **v1.1.2**.
 - Windows 10 Home; Intel Core i3-8100 @ 3.60 GHz, four logical processors; about 16 GB RAM.
 - The live launch used **Java 21.0.7**, Java HotSpot 64-Bit Server VM, with a **2 GiB maximum heap**.
   This is the actual recorded live JVM, distinct from the Java 17 unit-test toolchain.
@@ -72,13 +72,13 @@ latency or FPS. Scheduler wall completion time is also retained per trial.
   radius 13 and explosion power 10; fixture radius is not a crater radius.
 - Three warmup pairs followed by five measured pairs per scenario, matching seeds
   and alternating first-run order. A larger power-24 pair is a separate stress check.
-- Source base: `3efb65d0327cb0c1efb9add7baaa48744147526d`. The tested checkout was dirty:
-  it included the v1.1.3 production ray-loop and chunk-lookup optimizations, version
-  bump, regression tests and live coordination/profiling changes. It is a development-runtime benchmark, not a packaged-release-JAR
+- Source base: `41339d29d93ce86535ed052f07a2b66c7011dc6e`. The tested checkout was dirty:
+  live-test resource instrumentation was added locally; production explosion code
+  was unchanged. It is a development-runtime benchmark, not a packaged-release-JAR
   certification. Both processes were fully prepared before launch, with frozen
   source/class/JAR/launch inputs checked throughout each run.
 
-The [checked-in JSON evidence](benchmarks/live-v1.1.3-1.20.1.json) includes all 34 server
+The [checked-in JSON evidence](benchmarks/live-v1.1.2-1.20.1.json) includes all 34 server
 samples and matching client samples per loader (warmups and stress included),
 summary quartiles, actual JVM environment, run IDs, source hashes and verification
 flags. Original complete logs, launch descriptions and lifecycle/reload receipts
@@ -90,48 +90,9 @@ shutdown, fresh-process save/reload, real chunk replacement and partial-save phy
 checks. No benchmark result is accepted solely because it printed a PASS marker.
 See [TESTING.md](../TESTING.md) for fixture and verification details.
 
-## Comparison with v1.1.2
+## Historical reproduction
 
-The [archived v1.1.2 snapshot](BENCHMARKS-v1.1.2.md) uses the same host, fixture,
-seeds, runtime and sampling protocol, with separate unprofiled sessions. This is a
-historical comparison, not a controlled same-session A/B test of the two versions.
-
-| Loader / Boom version | Active work (ms) | Heaviest tick (ms) | Thread CPU (ms) | Allocated (MiB) |
-| --- | --- | --- | --- | --- |
-| Fabric / v1.1.2 | 53.811 | 16.403 | 15.625 | 6.299 |
-| Fabric / v1.1.3 | 16.890 | 8.315 | 31.250 | 5.392 |
-| Forge / v1.1.2 | 40.694 | 16.783 | 15.625 | 6.218 |
-| Forge / v1.1.3 | 24.515 | 9.730 | 15.625 | 5.507 |
-
-Median allocations fell **14.4% on Fabric and 11.4% on Forge**. Median heaviest-tick
-readings fell 49.3% and 42.0%, respectively. Timing is sensitive to desktop load and
-JVM behavior: Fabric's vanilla active-work baseline also changed substantially, so
-these timing ratios cannot all be attributed to the code changes. Fabric's CPU median
-increased by one coarse counter increment, while Forge's was unchanged; these runs
-do not establish lower CPU consumption than v1.1.2. The clearest measured improvement
-is fewer allocated bytes in this fixture, supported by removing repeated allocation
-in the ray loop.
-
-## What changed for v1.1.3
-
-A separate real-game JFR profile identified position allocation and chunk-map lookups
-in the ray loop as useful targets. Sampling weights guided the changes; they are not
-exact allocation totals or publication timings.
-
-- On 1.20.1, use a reusable position for affected-set lookup and allocate an immutable
-  set key only when a position is first selected. Preserve the original set insertion
-  order, selected air positions, vanilla shuffle and level RNG state.
-- On modern targets, reuse an immutable coordinate for consecutive samples in the
-  same block. Still read state and invoke native resistance/selection callbacks for
-  every sample, so hooks can retain their coordinate safely.
-- Reuse the current chunk while samples stay inside it. Clear this reference and the
-  map at each slice boundary so a replaced or unloaded chunk is reacquired.
-
-These changes keep the four-millisecond scheduling budget and existing block-change,
-lighting and neighbor-update behavior. Five-target build and forced-yield regressions
-cover the shared engines; the performance figures cover the real 1.20.1 loaders only.
-
-## Reproduce or refresh
+This snapshot describes v1.1.2. New runs from a later source version produce a separate snapshot; they do not replace these historical results.
 
 Use JDK 21 and Python 3.11+ on a machine capable of launching Minecraft's graphical
 client. Run one loader at a time in this checkout; do not edit or rebuild inputs
@@ -153,17 +114,9 @@ The plotting tool requires matplotlib and NumPy. To regenerate the chart without
 remeasuring:
 
 ```sh
-python tools/plot_benchmark.py
+python tools/plot_benchmark.py --data docs/benchmarks/live-v1.1.2-1.20.1.json
 ```
 
-By default, capture writes a version-specific JSON snapshot. Use `--data <path>` to
-regenerate a historical chart without overwriting its measurements.
-
-For diagnosis, add `--profile-server` to a live run to save `server-profile.jfr` in
-its evidence directory. The capture tool rejects profiled runs: rerun without that
-flag before generating a publication chart. See the official
-[JFR tooling](https://docs.oracle.com/en/java/javase/21/docs/specs/man/jfr.html).
-
 It uses the mod version saved with the data to name both
-[PNG](images/benchmark-live-v1.1.3.png) and [SVG](images/benchmark-live-v1.1.3.svg).
+[PNG](images/benchmark-live-v1.1.2.png) and [SVG](images/benchmark-live-v1.1.2.svg).
 No synthetic or calculation-only timing is used in this README chart.

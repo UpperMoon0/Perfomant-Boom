@@ -103,6 +103,8 @@ public final class FastExplosionEngine {
     private static final class ServerWorldView implements BlockView {
         private final ServerLevel level;
         private final Long2ObjectOpenHashMap<LevelChunk> chunkCache = new Long2ObjectOpenHashMap<>();
+        private LevelChunk lastChunk;
+        private long lastChunkKey;
 
         private ServerWorldView(ServerLevel level) {
             this.level = level;
@@ -122,10 +124,15 @@ public final class FastExplosionEngine {
             int chunkX = x >> 4;
             int chunkZ = z >> 4;
             long chunkKey = ChunkPos.asLong(chunkX, chunkZ);
-            LevelChunk chunk = chunkCache.get(chunkKey);
-            if (chunk == null) {
-                chunk = level.getChunk(chunkX, chunkZ);
-                chunkCache.put(chunkKey, chunk);
+            LevelChunk chunk = lastChunk;
+            if (chunk == null || chunkKey != lastChunkKey) {
+                chunk = chunkCache.get(chunkKey);
+                if (chunk == null) {
+                    chunk = level.getChunk(chunkX, chunkZ);
+                    chunkCache.put(chunkKey, chunk);
+                }
+                lastChunk = chunk;
+                lastChunkKey = chunkKey;
             }
 
             int sectionIndex = chunk.getSectionIndex(y);
@@ -144,6 +151,7 @@ public final class FastExplosionEngine {
 
         private void clearCache() {
             chunkCache.clear();
+            lastChunk = null;
         }
     }
 
@@ -157,6 +165,8 @@ public final class FastExplosionEngine {
         // its iteration order is the input to Util.shuffle and therefore affects both
         // destruction order and the level RNG state.
         private final HashSet<BlockPos> affectedBlocks = new HashSet<>();
+        // Lookup only: never insert this moving probe into the vanilla-shaped set.
+        private final BlockPos.MutableBlockPos affectedProbe = new BlockPos.MutableBlockPos();
         private final LongOpenHashSet blocks = new LongOpenHashSet();
         private final Long2ObjectOpenHashMap<LongArrayList> blocksByChunk = new Long2ObjectOpenHashMap<>();
 
@@ -285,14 +295,15 @@ public final class FastExplosionEngine {
                 // Vanilla adds the position even when it is air. Do the same with the
                 // same HashSet implementation so the later shuffled order and RNG state
                 // match Explosion#finalizeExplosion exactly.
-                BlockPos affected = new BlockPos(x, y, z);
-                affectedBlocks.add(affected);
+                if (!affectedBlocks.contains(affectedProbe.set(x, y, z))) {
+                    affectedBlocks.add(new BlockPos(x, y, z));
+                }
 
                 // Keep the non-air indexes as a secondary fast lookup used by metrics,
                 // light-boundary tests and existing diagnostics. Mutation order is NOT
                 // derived from these grouped indexes.
                 if (!state.isAir()) {
-                    long packed = affected.asLong();
+                    long packed = BlockPos.asLong(x, y, z);
                     if (blocks.add(packed)) {
                         long chunkKey = ChunkPos.asLong(x >> 4, z >> 4);
                         blocksByChunk.computeIfAbsent(chunkKey, ignored -> new LongArrayList()).add(packed);

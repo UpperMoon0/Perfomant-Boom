@@ -538,7 +538,7 @@ def verify_lifecycle_evidence(evidence: Path, token: str) -> None:
         raise ValueError('Missing partial-shutdown neighbor/shape physics persistence evidence')
 
 
-def run(loader: str, timeout: int, require_clean: bool = False) -> int:
+def run(loader: str, timeout: int, require_clean: bool = False, profile_server: bool = False) -> int:
     global GUARD
     root = Path(__file__).resolve().parents[1]
     lock_path = root / 'build' / 'live-boom.lock'
@@ -555,6 +555,7 @@ def run(loader: str, timeout: int, require_clean: bool = False) -> int:
     processes = []
     result = {'loader': loader, 'run_id': run_id, 'gameplay_pass': False, 'clean_shutdown': False,
               'persistence_pass': False, 'lifecycle_pass': False, 'source_unchanged': False, 'forced_cleanup': False}
+    result['profiling_enabled'] = profile_server
     started = time.monotonic()
     try:
         result['git_head'] = subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
@@ -585,7 +586,11 @@ def run(loader: str, timeout: int, require_clean: bool = False) -> int:
         (evidence/'frozen-inputs.json').write_text(json.dumps(frozen.hashes,indent=2)+'\n',encoding='utf-8')
         GUARD = frozen.check
         server_spec = specs['server']
-        server = popen(server_spec['command'], Path(server_spec['cwd']), env | server_spec['environment'])
+        server_command = list(server_spec['command'])
+        if profile_server:
+            server_command.insert(1, f'-XX:StartFlightRecording=filename={evidence / "server-profile.jfr"},settings=profile,dumponexit=true')
+            (evidence/'profiled-server-launch.json').write_text(json.dumps(server_command,indent=2)+'\n',encoding='utf-8')
+        server = popen(server_command, Path(server_spec['cwd']), env | server_spec['environment'])
         processes.append(server)
         server_out = OutputPump(server, 'server', evidence/'server.log')
         server_out.wait_for_any(SERVER_READY, timeout, FATAL+(SERVER_FAIL,))
@@ -655,10 +660,11 @@ def main() -> int:
     parser.add_argument('--loader',choices=('fabric','forge'),default='fabric')
     parser.add_argument('--timeout',type=int,default=DEFAULT_TIMEOUT)
     parser.add_argument('--require-clean',action='store_true')
+    parser.add_argument('--profile-server',action='store_true',help='Record server JFR for diagnosis; profiled timings are not publication benchmarks')
     args=parser.parse_args()
     if args.timeout <= 0:
         parser.error('--timeout must be positive')
-    return run(args.loader,args.timeout,args.require_clean)
+    return run(args.loader,args.timeout,args.require_clean,args.profile_server)
 
 
 if __name__ == '__main__':
