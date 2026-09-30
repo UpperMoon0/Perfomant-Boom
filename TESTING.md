@@ -64,6 +64,7 @@ Report these metrics separately:
 
 - **Active work (`activeWorkMs`, scheduler `workMs`)** is monotonic elapsed time inside explosion/scheduler calls, not actual thread/process CPU time. It excludes deferred work outside those calls.
 - **Observed server-tick duration** covers the start/end hooks, including explosion work and ten aftermath ticks. Oracle hashing/file I/O after the end hook is excluded. It is not a claim that every engine tail or OS cost is included.
+- **Observed server-thread CPU and allocated memory** sum Java thread-counter differences over those same tick intervals and the inline explosion invocation. They include normal server work and aftermath, exclude worker/client/process-wide resource use, and require supported counters. Allocated bytes are cumulative heap allocations, not retained memory or peak RAM; CPU counters can have coarse platform resolution. The README's [versioned live benchmark](docs/BENCHMARKS.md) retains raw per-tick readings and compares the no-drops scenario only.
 - **Client-acknowledged wall time** runs from explosion invocation through light settlement, oracle exchange, client convergence, two rendered frames and the server receipt. It includes harness synchronization overhead; it is not packet latency or pure engine completion time.
 - **Observed frame gaps** use actual world-render callbacks from trial readiness through convergence. They include rendering and test-observer costs; they are not GPU fence timestamps or percentile FPS. Render callbacks do not prove every chunk mesh is uploaded.
 
