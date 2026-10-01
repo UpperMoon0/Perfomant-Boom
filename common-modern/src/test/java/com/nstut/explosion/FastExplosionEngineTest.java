@@ -70,28 +70,37 @@ class FastExplosionEngineTest {
         float power = 6.0F;
         long seed = 0x51A77E5EEDL;
 
-        RandomSource actualRandom = RandomSource.create(seed);
-        FastExplosionEngine.IncrementalCalculation calculation =
-            FastExplosionEngine.create(world, center, power, actualRandom);
-        assertTrue(calculation.processUntil(Long.MAX_VALUE));
+        for (boolean sliced : new boolean[]{false, true}) {
+            RandomSource actualRandom = RandomSource.create(seed);
+            FastExplosionEngine.IncrementalCalculation calculation =
+                FastExplosionEngine.create(world, center, power, actualRandom);
+            if (sliced) {
+                while (!calculation.isDone()) calculation.processUntil(Long.MIN_VALUE);
+            } else {
+                assertTrue(calculation.processUntil(Long.MAX_VALUE));
+            }
+            for (BlockPos pos : calculation.affectedBlocks()) {
+                assertFalse(pos instanceof BlockPos.MutableBlockPos, "Retained set keys must stay immutable across yields");
+            }
 
-        RandomSource vanillaRandom = RandomSource.create(seed);
-        HashSet<BlockPos> expectedAffected =
-            vanillaReferenceAffected(world, center, power, vanillaRandom);
-        assertEquals(expectedAffected, calculation.affectedBlocks());
-        assertTrue(calculation.affectedBlocks().size() > calculation.blockCount(),
-            "fixture must include vanilla-selected air positions");
+            RandomSource vanillaRandom = RandomSource.create(seed);
+            HashSet<BlockPos> expectedAffected =
+                vanillaReferenceAffected(world, center, power, vanillaRandom);
+            assertEquals(expectedAffected, calculation.affectedBlocks());
+            assertTrue(calculation.affectedBlocks().size() > calculation.blockCount(),
+                "fixture must include vanilla-selected air positions");
 
-        ObjectArrayList<BlockPos> expectedOrder = new ObjectArrayList<>();
-        expectedOrder.addAll(expectedAffected);
-        VanillaExplosionAdapter.shuffle(expectedOrder, vanillaRandom);
-        ObjectArrayList<BlockPos> actualOrder = new ObjectArrayList<>(calculation.affectedBlocks());
-        VanillaExplosionAdapter.shuffle(actualOrder, actualRandom);
+            ObjectArrayList<BlockPos> expectedOrder = new ObjectArrayList<>();
+            expectedOrder.addAll(expectedAffected);
+            VanillaExplosionAdapter.shuffle(expectedOrder, vanillaRandom);
+            ObjectArrayList<BlockPos> actualOrder = new ObjectArrayList<>(calculation.affectedBlocks());
+            VanillaExplosionAdapter.shuffle(actualOrder, actualRandom);
 
-        assertEquals(expectedOrder, actualOrder,
-            "destruction order must be vanilla's shuffled HashSet order");
-        assertEquals(vanillaRandom.nextLong(), actualRandom.nextLong(),
-            "level RNG must match vanilla after ray selection + full affected-position shuffle");
+            assertEquals(expectedOrder, actualOrder,
+                "destruction order must be vanilla's shuffled HashSet order");
+            assertEquals(vanillaRandom.nextLong(), actualRandom.nextLong(),
+                "level RNG must match vanilla after ray selection + full affected-position shuffle");
+        }
     }
 
     @Test
@@ -146,6 +155,40 @@ class FastExplosionEngineTest {
         // The vanilla 16^3 surface-ray algorithm is linear in ray length, not
         // volumetric in explosion size like the previous BFS.
         assertTrue(calculation.sampleCount() < 1_000_000L);
+    }
+
+    @Test
+    void retainedCallbackCoordinatesStayImmutableAcrossRepeatedSamplesAndYields() {
+        var retained = new java.util.ArrayList<BlockPos>();
+        var snapshots = new java.util.ArrayList<BlockPos>();
+        var selections = new java.util.concurrent.atomic.AtomicInteger();
+        FastExplosionEngine.BlockView view = new FastExplosionEngine.BlockView() {
+            public boolean isInWorldBounds(int x, int y, int z) { return true; }
+            public BlockState getBlockState(int x, int y, int z) { return Blocks.STONE.defaultBlockState(); }
+            public java.util.Optional<Float> resistance(BlockPos pos, BlockState state,
+                    net.minecraft.world.level.material.FluidState fluid) {
+                retained.add(pos);
+                snapshots.add(new BlockPos(pos.getX(), pos.getY(), pos.getZ()));
+                return FastExplosionEngine.BlockView.super.resistance(pos, state, fluid);
+            }
+            public boolean shouldExplode(BlockPos pos, BlockState state, float strength) {
+                selections.incrementAndGet();
+                return true;
+            }
+        };
+        var sliced = FastExplosionEngine.create(view, Vec3.ZERO, 4, RandomSource.create(55));
+        while (!sliced.isDone()) sliced.processUntil(Long.MIN_VALUE);
+        assertEquals(sliced.sampleCount(), retained.size(), "Resistance callbacks must still run for every ray sample");
+        for (int i = 0; i < retained.size(); i++) {
+            assertFalse(retained.get(i) instanceof BlockPos.MutableBlockPos);
+            assertEquals(snapshots.get(i), retained.get(i), "A callback can retain a position past a yield");
+        }
+        int slicedSelections = selections.get();
+        selections.set(0);
+        var oneShot = FastExplosionEngine.create(view, Vec3.ZERO, 4, RandomSource.create(55));
+        assertTrue(oneShot.processUntil(Long.MAX_VALUE));
+        assertEquals(slicedSelections, selections.get(), "Reuse must not skip per-sample selection hooks");
+        assertEquals(oneShot.affectedBlocks(), sliced.affectedBlocks());
     }
 
     private static FastExplosionEngine.BlockView world(Function<BlockPos, BlockState> stateAt) {

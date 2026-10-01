@@ -143,28 +143,37 @@ class FastExplosionEngineTest {
         float power = 6.0F;
         long seed = 0x51A77E5EEDL;
 
-        RandomSource actualRandom = RandomSource.create(seed);
-        FastExplosionEngine.IncrementalCalculation calculation =
-            FastExplosionEngine.create(world, center, power, actualRandom);
-        assertTrue(calculation.processUntil(Long.MAX_VALUE));
+        for (boolean sliced : new boolean[]{false, true}) {
+            RandomSource actualRandom = RandomSource.create(seed);
+            FastExplosionEngine.IncrementalCalculation calculation =
+                FastExplosionEngine.create(world, center, power, actualRandom);
+            if (sliced) {
+                while (!calculation.isDone()) calculation.processUntil(Long.MIN_VALUE);
+            } else {
+                assertTrue(calculation.processUntil(Long.MAX_VALUE));
+            }
+            for (BlockPos pos : calculation.affectedBlocks()) {
+                assertFalse(pos instanceof BlockPos.MutableBlockPos, "Retained set keys must stay immutable across yields");
+            }
 
-        RandomSource vanillaRandom = RandomSource.create(seed);
-        HashSet<BlockPos> expectedAffected =
-            vanillaReferenceAffected(world, center, power, vanillaRandom);
-        assertEquals(expectedAffected, calculation.affectedBlocks());
-        assertTrue(calculation.affectedBlocks().size() > calculation.blockCount(),
-            "fixture must include vanilla-selected air positions");
+            RandomSource vanillaRandom = RandomSource.create(seed);
+            HashSet<BlockPos> expectedAffected =
+                vanillaReferenceAffected(world, center, power, vanillaRandom);
+            assertEquals(expectedAffected, calculation.affectedBlocks());
+            assertTrue(calculation.affectedBlocks().size() > calculation.blockCount(),
+                "fixture must include vanilla-selected air positions");
 
-        ObjectArrayList<BlockPos> expectedOrder = new ObjectArrayList<>();
-        expectedOrder.addAll(expectedAffected);
-        Util.shuffle(expectedOrder, vanillaRandom);
-        ObjectArrayList<BlockPos> actualOrder =
-            ExplosionScheduler.vanillaDestructionOrder(calculation, actualRandom);
+            ObjectArrayList<BlockPos> expectedOrder = new ObjectArrayList<>();
+            expectedOrder.addAll(expectedAffected);
+            Util.shuffle(expectedOrder, vanillaRandom);
+            ObjectArrayList<BlockPos> actualOrder =
+                ExplosionScheduler.vanillaDestructionOrder(calculation, actualRandom);
 
-        assertEquals(expectedOrder, actualOrder,
-            "destruction order must be vanilla's shuffled HashSet order");
-        assertEquals(vanillaRandom.nextLong(), actualRandom.nextLong(),
-            "level RNG must match vanilla after ray selection + full affected-position shuffle");
+            assertEquals(expectedOrder, actualOrder,
+                "destruction order must be vanilla's shuffled HashSet order");
+            assertEquals(vanillaRandom.nextLong(), actualRandom.nextLong(),
+                "level RNG must match vanilla after ray selection + full affected-position shuffle");
+        }
     }
 
     @Test

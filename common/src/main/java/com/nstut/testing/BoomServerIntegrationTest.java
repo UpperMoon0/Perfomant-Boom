@@ -239,7 +239,9 @@ public final class BoomServerIntegrationTest {
 
     private static void begin() {
         begun=false; ticks=0; phase=Phase.BEGIN;
-        BoomStateDigest.write("begin.json",TRIALS.get(next));
+        // A client can hold the current file open while Windows rejects replacement.
+        // Publish each trial once under its own name instead of replacing a read file.
+        BoomStateDigest.write(String.format(Locale.ROOT,"begin-%02d.json",next),TRIALS.get(next));
     }
     private static void publishExpected(ServerLevel level) {
         Trial t=TRIALS.get(next);

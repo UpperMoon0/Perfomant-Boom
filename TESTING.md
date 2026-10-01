@@ -96,3 +96,5 @@ cancellation, shared budgets, light/POI/block-entity state, fluid purge, boundar
 no drops and forced-chunk ownership. Those projects own their test commands and results;
 they are not part of Boom's release gate. Do not interpret a successful build or server
 fixture as a live-client performance measurement for the new targets.
+
+For performance diagnosis, add `--profile-server` to a live run to write a server JFR recording in its evidence directory. Profiled evidence is excluded from publication charts. Unprofiled chart capture defaults to versioned JSON and PNG/SVG filenames; see [benchmark reproduction](docs/BENCHMARKS.md#reproduce-or-refresh).

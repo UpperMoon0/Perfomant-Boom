@@ -34,7 +34,7 @@ public final class BoomClientIntegrationTest {
                 mc.getConnection().sendCommand("perfomant_boom_live_ready");
                 System.out.println("PERFOMANT_BOOM_E2E_CLIENT_FIXTURE_SEEN");
             }
-            var begin=BoomStateDigest.evidence().resolve("begin.json");
+            var begin=BoomStateDigest.evidence().resolve(String.format(java.util.Locale.ROOT,"begin-%02d.json",next));
             if (Files.exists(begin)) {
                 var t=BoomStateDigest.JSON.fromJson(Files.readString(begin),BoomServerIntegrationTest.Trial.class);
                 if (t.index()==next && active!=next) {

@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "docs/benchmarks/live-1.20.1.json"
+DATA = None
 
 
 def capture(directories):
@@ -29,6 +29,8 @@ def capture(directories):
     runs = []
     for directory in directories:
         result = json.loads((directory / "result.json").read_text(encoding="utf-8"))
+        if result.get("profiling_enabled"):
+            raise ValueError("Profiled runs are diagnostic; rerun without profiling for the chart")
         gates = ("pass", "gameplay_pass", "clean_shutdown", "persistence_pass",
                  "lifecycle_pass", "source_unchanged")
         if not all(result.get(gate) is True for gate in gates) or result.get("forced_cleanup") is not False:
@@ -63,11 +65,13 @@ def capture(directories):
                          server_samples=raw, client_samples=clients))
     if len({run["result"]["loader"] for run in runs}) != len(runs):
         raise ValueError("Capture one run per loader")
+    if DATA.exists() and json.loads(DATA.read_text(encoding="utf-8"))["mod_version"] != version:
+        raise ValueError("Choose a separate data file for this mod version; historical snapshots are preserved")
     DATA.parent.mkdir(parents=True, exist_ok=True)
     snapshot = dict(mod_version=version, minecraft="1.20.1", scenario="no-drops", power=10,
                     warmup_pairs=3, measured_pairs=5,
                     machine=dict(cpu="Intel Core i3-8100 @ 3.60 GHz", ram_gib=15.93, os="Windows 10 Home"),
-                    scope="Real dedicated server plus real graphical client; test instrumentation in a dirty checkout",
+                    scope="Real dedicated server plus real graphical client; measured source hashes recorded; checkout state in each result",
                     runs=runs)
     DATA.write_text(json.dumps(snapshot, indent=2) + "\n", encoding="utf-8")
 
@@ -75,7 +79,11 @@ def capture(directories):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--capture", type=Path, nargs="+")
+    parser.add_argument("--data", type=Path, help="Snapshot path; default uses the configured mod version")
     args = parser.parse_args()
+    global DATA
+    configured = re.search(r"(?m)^mod_version\s*=\s*(\S+)", (ROOT / "gradle.properties").read_text(encoding="utf-8"))[1]
+    DATA = args.data or ROOT / f"docs/benchmarks/live-v{configured}-1.20.1.json"
     if args.capture:
         capture(args.capture)
     snapshot = json.loads(DATA.read_text(encoding="utf-8"))

@@ -108,6 +108,8 @@ public final class FastExplosionEngine {
     private static final class ServerWorldView implements BlockView {
         private final ServerLevel level;
         private final Long2ObjectOpenHashMap<LevelChunk> chunkCache = new Long2ObjectOpenHashMap<>();
+        private LevelChunk lastChunk;
+        private long lastChunkKey;
 
         private final net.minecraft.world.level.Explosion explosion;
         private final net.minecraft.world.level.ExplosionDamageCalculator damage = new net.minecraft.world.level.ExplosionDamageCalculator();
@@ -136,10 +138,15 @@ public final class FastExplosionEngine {
             int chunkX = x >> 4;
             int chunkZ = z >> 4;
             long chunkKey = VanillaExplosionAdapter.chunkKey(chunkX, chunkZ);
-            LevelChunk chunk = chunkCache.get(chunkKey);
-            if (chunk == null) {
-                chunk = level.getChunk(chunkX, chunkZ);
-                chunkCache.put(chunkKey, chunk);
+            LevelChunk chunk = lastChunk;
+            if (chunk == null || chunkKey != lastChunkKey) {
+                chunk = chunkCache.get(chunkKey);
+                if (chunk == null) {
+                    chunk = level.getChunk(chunkX, chunkZ);
+                    chunkCache.put(chunkKey, chunk);
+                }
+                lastChunk = chunk;
+                lastChunkKey = chunkKey;
             }
 
             int sectionIndex = chunk.getSectionIndex(y);
@@ -158,6 +165,7 @@ public final class FastExplosionEngine {
 
         private void clearCache() {
             chunkCache.clear();
+            lastChunk = null;
         }
     }
 
@@ -171,6 +179,9 @@ public final class FastExplosionEngine {
         // its iteration order is the input to Util.shuffle and therefore affects both
         // destruction order and the level RNG state.
         private final HashSet<BlockPos> affectedBlocks = new HashSet<>();
+        // Native callbacks may retain this argument. Reuse immutable positions only,
+        // while still reading state and invoking resistance/selection on every sample.
+        private BlockPos lastRayPosition;
         private final LongOpenHashSet blocks = new LongOpenHashSet();
         private final Long2ObjectOpenHashMap<LongArrayList> blocksByChunk = new Long2ObjectOpenHashMap<>();
 
@@ -287,7 +298,10 @@ public final class FastExplosionEngine {
             BlockState state = world.getBlockState(x, y, z);
             FluidState fluidState = state.getFluidState();
 
-            BlockPos affected = new BlockPos(x, y, z);
+            BlockPos affected = lastRayPosition;
+            if (affected == null || affected.getX() != x || affected.getY() != y || affected.getZ() != z) {
+                lastRayPosition = affected = new BlockPos(x, y, z);
+            }
             var resistance = world.resistance(affected, state, fluidState);
             if (resistance.isPresent()) rayStrength -= (resistance.get() + 0.3F) * RESISTANCE_STEP;
 
