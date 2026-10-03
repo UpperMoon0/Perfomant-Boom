@@ -13,7 +13,7 @@ Large explosions, scheduled across server ticks—and a shared terrain engine fo
 
 ## Performance vs vanilla
 
-![Perfomant Boom v1.1.3 real-game benchmark against vanilla: active explosion time, heaviest server tick, server-thread CPU work and memory allocations on Fabric and Forge 1.20.1.]([docs/images/benchmark-live-v1.1.3.png](https://github.com/UpperMoon0/Perfomant-Boom/blob/main/docs/images/benchmark-live-v1.1.3.png?raw=true))
+![Perfomant Boom v1.1.3 real-game benchmark against vanilla: active explosion time, heaviest server tick, server-thread CPU work and memory allocations on Fabric and Forge 1.20.1.](https://github.com/UpperMoon0/Perfomant-Boom/blob/main/docs/images/benchmark-live-v1.1.3.png?raw=true)
 
 Measured on **30 September 2026** using real Minecraft **1.20.1 Fabric and Forge dedicated servers and graphical clients**, with power-10 explosions and drops disabled for both engines. Each loader used three warmup pairs and five measured pairs, matching seeds and alternating order. Exact crater, client block/light state, clean shutdown and save/reload checks passed.
 
@@ -23,7 +23,7 @@ Lower bars are better. The **black whiskers show the middle 50% of measured resu
 
 **v1.1.3** reduces repeated position allocations and chunk lookups. Median allocations were **11–14% below the archived v1.1.2 runs** in this fixture; the separate sessions do not establish a controlled version-to-version timing gain.
 
-See the [benchmark data and reproduction steps](docs/BENCHMARKS.md) for machine details, raw samples and measurement scope.
+See the [benchmark data and reproduction steps](https://github.com/UpperMoon0/Perfomant-Boom/blob/main/docs/BENCHMARKS.md) for machine details, raw samples and measurement scope.
 
 ## Try it
 
